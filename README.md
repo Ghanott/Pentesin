@@ -8,7 +8,7 @@
 
 # pentesin
 
-### The open-source AI pentesting tool. Autonomous AI hackers that find and fix your app’s vulnerabilities.
+### Open-source black-box penetration testing for live web apps and APIs. Validates findings with proof-of-concept evidence.
 
 <br/>
 
@@ -29,23 +29,18 @@
 </div>
 
 
-> [!TIP]
-> **New!** pentesin integrates seamlessly with GitHub Actions and CI/CD pipelines. Automatically scan for vulnerabilities on every pull request and block insecure code before it reaches production - [Get started with no setup required](https://github.com/Ghanott/Pentesin#readme).
-
 ---
-
 
 ## pentesin Overview
 
-pentesin are autonomous AI penetration testing agents that act just like real hackers - they run your code dynamically, find vulnerabilities, and validate them through actual proofs-of-concept. Built for developers and security teams who need fast, accurate security testing without the overhead of manual pentesting or the false positives of static analysis tools.
+pentesin performs black-box security testing against live web applications and APIs. It uses AI agents to explore in-scope targets, validate vulnerabilities, and save findings with proof-of-concept evidence.
 
-**Key Capabilities:**
+**Key capabilities:**
 
-- **Full pentesting toolkit** - reconnaissance, exploitation, and validation out of the box
-- **Multi-agent orchestration** - teams of AI pentesters that collaborate and scale
-- **Real exploit validation** - working PoCs, not false positives like legacy vulnerability scanners
-- **Developer‑first CLI** - actionable findings with remediation guidance
-- **Auto‑fix & reporting** - generate patches and compliance-ready pentest reports
+- Scan authorized URLs, domains, IPs, and API contracts
+- Coordinate agents for reconnaissance, testing, and validation
+- Save findings and reports locally
+- Use a terminal UI or run headlessly in automation
 
 
 <br>
@@ -58,12 +53,12 @@ pentesin are autonomous AI penetration testing agents that act just like real ha
 </div>
 
 
-## Use Cases
+## Use cases
 
-- **Application Security Testing** - Detect and validate critical vulnerabilities in your applications
-- **Rapid Penetration Testing** - Get penetration tests done in hours, not weeks, with compliance reports
-- **Bug Bounty Automation** - Automate bug bounty research and generate PoCs for faster reporting
-- **CI/CD Integration** - Run tests in CI/CD to block vulnerabilities before reaching production
+- Authorized black-box assessments of live web applications
+- API security testing from a supplied OpenAPI, Swagger, or Postman contract
+- Repeatable local scans during development or in CI pipelines
+- Evidence-backed findings for manual remediation and verification
 
 ## 🚀 Quick Start
 
@@ -108,28 +103,19 @@ Installed with pipx, uv, or pip? `pentesin --update` prints the matching upgrade
 
 ---
 
-## Ways to Run pentesin
+## Deployment
 
-- **Open Source** - free, runs locally with Docker and your own LLM key. [Quick Start](https://github.com/Ghanott/Pentesin/tree/main/docs/quickstart)
-- **pentesin Cloud** - no setup, validated findings, one-click autofix, and PR reviews. [Run a pentest →](https://github.com/Ghanott/Pentesin#readme)
-
----
-
-## ☁️ pentesin Cloud
-
-The `pentesin cloud` commands talk to a relay at `PENTESIN_APP_URL`. This fork
-ships no hosted relay, so set that variable to a compatible deployment you
-operate before using them.
+pentesin runs locally in Docker and uses your configured LLM provider. This fork has no hosted cloud service; the optional `pentesin cloud` commands require `PENTESIN_APP_URL` to point to a compatible relay you operate.
 
 ## 🤖 Use pentesin from Your Coding Agent
 
-pentesin is agent-ready. Give Claude Code, Cursor, Codex, or any [SKILL.md-compatible](https://agentskills.io) agent the ability to run pentests, fix findings, and set up CI scanning:
+pentesin can be used from Claude Code, Cursor, Codex, or any [SKILL.md-compatible](https://agentskills.io) agent to test authorized web apps and APIs:
 
 ```bash
 npx skills add Ghanott/Pentesin
 ```
 
-This installs nine skills for running pentests, fixing findings, and CI scanning, against code, web apps, APIs, and the OWASP Top 10. Agents can use the local CLI or the managed cloud with the same engine.
+This installs skills for testing authorized web apps and APIs, working with findings, and CI scanning. This fork supports live targets and API contracts; it does not scan source code or Git repositories.
 
 See [`AGENTS.md`](AGENTS.md) for the quick reference, [docs](https://github.com/Ghanott/Pentesin/tree/main/docs) for the CLI, and [docs](https://github.com/Ghanott/Pentesin/tree/main/docs/integrations) for the API.
 
@@ -139,36 +125,22 @@ See [`AGENTS.md`](AGENTS.md) for the quick reference, [docs](https://github.com/
 
 ### Agentic Pentesting Tools
 
-pentesin agents come equipped with a comprehensive offensive security toolkit - the same tools used by professional penetration testers and ethical hackers:
+The agent toolkit supports black-box testing of live web and API targets:
 
-- **HTTP Interception Proxy** - Full request/response manipulation and analysis with Caido
-- **Browser Exploitation** - Automated browser for testing XSS, CSRF, clickjacking, and auth bypass flows
-- **Shell & Command Execution** - Interactive terminal for exploit development and post-exploitation
-- **Custom Exploit Runtime** - Python sandbox for writing and validating proof-of-concept exploits
-- **Reconnaissance & OSINT** - Automated attack surface mapping, subdomain enumeration, and fingerprinting
-- **Static & Dynamic Code Analysis** - SAST + DAST capabilities for comprehensive application security testing
-- **Vulnerability Knowledge Base** - Structured findings with CVSS scoring and OWASP classification
+- **HTTP proxy** — inspect and manipulate in-scope requests and responses
+- **Browser testing** — exercise web flows and test client-side vulnerabilities
+- **Sandboxed terminal** — run permitted security tools during an assessment
+- **Python runtime** — write and validate proof-of-concept tests
+- **Reconnaissance** — map the authorized target's exposed attack surface
+- **Structured findings** — reports include severity, evidence, and remediation guidance
 
-### Comprehensive Vulnerability Scanner
+### Vulnerability testing
 
-pentesin identifies, validates, and exploits a wide range of security vulnerabilities across the OWASP Top 10 and beyond:
+Agents test in-scope web and API targets for common security issues, including access-control flaws, injection, SSRF, XSS, authentication weaknesses, and business-logic vulnerabilities. Findings are written to local run reports with supporting evidence.
 
-- **Broken Access Control** - IDOR, privilege escalation, auth bypass
-- **Injection Attacks** - SQL injection, NoSQL injection, OS command injection, SSTI
-- **Server-Side Vulnerabilities** - SSRF, XXE, insecure deserialization, RCE
-- **Client-Side Attacks** - XSS (stored/reflected/DOM), prototype pollution, CSRF
-- **Business Logic Flaws** - Race conditions, payment manipulation, workflow bypass
-- **Authentication & Session** - JWT attacks, session fixation, credential stuffing vectors
-- **Infrastructure & Cloud** - Misconfigurations, exposed services, cloud security issues
-- **API Security** - Broken authentication, mass assignment, rate limiting bypass
+### Multi-agent testing
 
-### Graph of Agents (Multi-Agent Pentesting)
-
-Advanced multi-agent orchestration for comprehensive automated penetration testing:
-
-- **Distributed Pentesting** - Specialized AI agents for recon, exploitation, and post-exploitation
-- **Scalable Security Testing** - Parallel execution across multiple targets for fast, comprehensive coverage
-- **Dynamic Coordination** - Agents share discoveries, chain vulnerabilities, and collaborate like a red team
+Specialized agents coordinate reconnaissance, testing, and validation. Test coverage depends on the target, available access, and scan mode; a clean report does not guarantee that every vulnerability was found.
 
 ---
 
@@ -259,39 +231,9 @@ Run pentesin programmatically without interactive UI using the `-n/--non-interac
 pentesin -n --target https://your-app.com
 ```
 
-### CI/CD (GitHub Actions)
+### CI/CD
 
-pentesin can be added to your pipeline to run a security test on pull requests with a lightweight GitHub Actions workflow:
-
-```yaml
-name: pentesin-penetration-test
-
-on:
-  pull_request:
-
-jobs:
-  security-scan:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-
-      - name: Install pentesin
-        run: curl -sSL https://raw.githubusercontent.com/Ghanott/Pentesin/main/scripts/install.sh | bash
-
-      - name: Run pentesin
-        env:
-          PENTESIN_LLM: ${{ secrets.PENTESIN_LLM }}
-          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
-
-        run: pentesin -n -t ./ --scan-mode quick
-```
-
-> [!TIP]
-> In CI pull request runs, pentesin automatically scopes quick reviews to changed files, which is why the
-> checkout above fetches full history. See the
-> [CI/CD documentation](https://github.com/Ghanott/Pentesin/tree/main/docs/integrations/github-actions) for the details.
+Run scans in CI against an authorized live target or an API contract. The CLI rejects source directories and Git repositories as targets, so provide a URL, domain, IP, or contract whose declared servers are in scope. Store LLM credentials as CI secrets and use `-n` for non-interactive runs. See the [CI/CD guide](https://github.com/Ghanott/Pentesin/tree/main/docs/integrations/ci-cd) for a workflow example.
 
 ### Configuration
 
@@ -317,20 +259,9 @@ export PENTESIN_LLM="chatgpt/gpt-5.4"   # chatgpt/<model> runs on the subscripti
 pentesin auth status                    # show the active sign-in, or logout to forget it
 ```
 
-#### Use the managed platform: `pentesin cloud`
+#### Cloud CLI
 
-Run scans through a relay from the terminal, without Docker or an LLM key (requires `PENTESIN_APP_URL`):
-
-```bash
-pentesin cloud login                                  # browser sign-in, one credential per install
-pentesin cloud scans start --source . --yes --wait    # scan local code, approving the upload
-pentesin cloud scans start --engagement-type live_test --domain-ids <uuid> --wait
-pentesin cloud vulns list --severity critical
-```
-
-Every [REST API](https://github.com/Ghanott/Pentesin/tree/main/docs/integrations) operation has a matching `pentesin cloud <resource> <verb>` command. Run `pentesin cloud` to list the resources, and add `help` to a resource to list its verbs. Output is JSON when stdout is not a terminal or when you pass `--json`. Binary downloads are the exception: redirect the raw bytes, or combine `--output FILE --json` for download metadata.
-
-Cloud commands require `PENTESIN_APP_URL` pointing at a compatible relay you operate.
+The cloud CLI is retained for deployments that operate a compatible relay. This repository does not provide a hosted relay. Set `PENTESIN_APP_URL` to your relay before using `pentesin cloud`; the cloud flow is separate from local Docker scans.
 
 #### Connect your own MCP servers
 
