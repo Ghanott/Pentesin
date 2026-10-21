@@ -1,8 +1,3 @@
-<p align="center">
-  <a href="https://github.com/Ghanott/Pentesin/">
-    <img src="docs/images/logo.png" alt="pentesin Banner" width="100%">
-  </a>
-</p>
 
 <div align="center">
 
@@ -44,14 +39,6 @@ pentesin performs black-box security testing against live web applications and A
 
 
 <br>
-
-
-<div align="center">
-  <a href="https://github.com/Ghanott/Pentesin">
-    <img src=".github/screenshot.png" alt="pentesin Demo" width="1000" style="border-radius: 16px;">
-  </a>
-</div>
-
 
 ## Use cases
 
