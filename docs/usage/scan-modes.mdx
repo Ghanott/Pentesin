@@ -1,0 +1,62 @@
+---
+title: "Scan Modes"
+description: "Choose the right scan depth for your use case"
+---
+
+pentesin offers three scan modes to balance speed and thoroughness.
+
+## Quick
+
+```bash
+pentesin --target https://your-app.com --scan-mode quick
+```
+
+Fast checks for obvious vulnerabilities. Best for:
+- CI/CD pipelines
+- Pull request validation
+- Rapid smoke tests
+
+**Duration**: Minutes
+
+## Standard
+
+```bash
+pentesin --target https://your-app.com --scan-mode standard
+```
+
+Balanced testing for routine security reviews. Best for:
+- Regular security assessments
+- Pre-release validation
+- Development milestones
+
+**Duration**: 30 minutes to 1 hour
+
+**Black-box behavior**: Uses only live targets and observed responses; no source code is read.
+
+## Deep
+
+```bash
+pentesin --target https://your-app.com --scan-mode deep
+```
+
+Thorough penetration testing. Best for:
+- Comprehensive security audits
+- Pre-production reviews
+- Critical application assessments
+
+**Duration**: 1-4 hours depending on target complexity
+
+**API contracts**: When OpenAPI/Swagger/Postman specs are included, endpoint metadata is used alongside live target responses; source-aware triage is not performed.
+
+<Note>
+Deep mode is the default. It explores edge cases, chained vulnerabilities, and complex attack paths.
+</Note>
+
+## Choosing a Mode
+
+| Scenario | Recommended Mode |
+|----------|------------------|
+| Every PR | Quick |
+| Weekly scans | Standard |
+| Before major release | Deep |
+| Bug bounty hunting | Deep |

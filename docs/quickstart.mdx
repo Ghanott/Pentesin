@@ -1,0 +1,83 @@
+---
+title: "Quick Start"
+description: "Install pentesin and run your first security scan"
+---
+
+## Prerequisites
+
+- Docker (running)
+- An LLM API key from any [supported provider](/llm-providers/overview) (OpenAI, Anthropic, Google, etc.)
+
+## Installation
+
+<Tabs>
+  <Tab title="curl">
+    ```bash
+    curl -sSL https://raw.githubusercontent.com/Ghanott/Pentesin/main/scripts/install.sh | bash
+    ```
+  </Tab>
+  <Tab title="pipx">
+    ```bash
+    pipx install pentesin-agent
+    ```
+  </Tab>
+</Tabs>
+
+## Configuration
+
+Set your LLM provider:
+
+```bash
+export PENTESIN_LLM="openrouter/z-ai/glm-5.3"
+export LLM_API_KEY="your-api-key"
+```
+
+<Tip>
+For best results, use `openrouter/z-ai/glm-5.3` (the default pick), `openai/gpt-5.4`, `anthropic/claude-opus-4-6`, or `openai/gpt-5.2`.
+</Tip>
+
+## Run Your First Scan
+
+```bash
+pentesin --target https://your-app.com
+```
+
+<Note>
+First run pulls the Docker sandbox image automatically. Results are saved to `pentesin_runs/<run-name>`.
+</Note>
+
+## Target Types
+
+This build is **black-box only**. Targets may be live URLs/domains/IPs or
+OpenAPI/Swagger/Postman API contracts. Contracts are parsed on the host into a
+sanitized endpoint map; their declared HTTP(S) servers enter scope. Source
+directories and Git repositories are rejected. Only scan targets you are
+authorized to test.
+
+```bash
+# Live web application
+pentesin --target https://your-app.com
+
+# Domain
+pentesin --target example.com
+
+# IP address
+pentesin --target 192.168.1.42
+
+# Multiple live targets
+pentesin -t https://staging.example.com -t https://your-app.com
+
+# Targets from a file, one target per non-empty, non-comment line
+pentesin --target-list ./targets.txt
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="CLI Options" icon="terminal" href="/usage/cli">
+    Explore all command-line options.
+  </Card>
+  <Card title="Scan Modes" icon="gauge" href="/usage/scan-modes">
+    Choose the right scan depth.
+  </Card>
+</CardGroup>

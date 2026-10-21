@@ -1,0 +1,96 @@
+---
+title: "CI/CD Integration"
+description: "Run pentesin in any CI/CD pipeline"
+---
+
+pentesin runs in headless mode for automated pipelines.
+
+## Headless Mode
+
+Use the `-n` or `--non-interactive` flag:
+
+```bash
+pentesin -n --target https://staging.example.com --scan-mode quick
+```
+
+For API testing, pass an OpenAPI/Swagger/Postman contract as `--target`; its
+HTTP(S) servers become scope while the raw contract is parsed on the host.
+```bash
+pentesin -n --target ./openapi.yaml --scan-mode quick
+```
+
+## Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | No vulnerabilities found (with `--fail-on`, none at or above the threshold) |
+| 1 | Execution error |
+| 2 | Vulnerabilities found (with `--fail-on`, at least one at or above the threshold) |
+
+To fail only on serious findings, pass `--fail-on` with a minimum severity. Lower findings are still reported but exit `0`, so a passing job does not mean the report is empty.:
+
+```bash
+pentesin -n --target https://staging.example.com --scan-mode quick --fail-on high
+```
+
+## GitLab CI
+
+```yaml .gitlab-ci.yml
+security-scan:
+  image: docker:latest
+  services:
+    - docker:dind
+  variables:
+    PENTESIN_LLM: $PENTESIN_LLM
+    LLM_API_KEY: $LLM_API_KEY
+  script:
+    - curl -sSL https://raw.githubusercontent.com/Ghanott/Pentesin/main/scripts/install.sh | bash
+    - pentesin -n -t ./ --scan-mode quick
+```
+
+## Jenkins
+
+```groovy Jenkinsfile
+pipeline {
+    agent any
+    environment {
+        PENTESIN_LLM = credentials('pentesin-llm')
+        LLM_API_KEY = credentials('llm-api-key')
+    }
+    stages {
+        stage('Security Scan') {
+            steps {
+                sh 'curl -sSL https://raw.githubusercontent.com/Ghanott/Pentesin/main/scripts/install.sh | bash'
+                sh 'pentesin -n -t ./ --scan-mode quick'
+            }
+        }
+    }
+}
+```
+
+## CircleCI
+
+```yaml .circleci/config.yml
+version: 2.1
+jobs:
+  security-scan:
+    docker:
+      - image: cimg/base:current
+    steps:
+      - checkout
+      - setup_remote_docker
+      - run:
+          name: Install pentesin
+          command: curl -sSL https://raw.githubusercontent.com/Ghanott/Pentesin/main/scripts/install.sh | bash
+      - run:
+          name: Run Scan
+          command: pentesin -n -t ./ --scan-mode quick
+```
+
+<Note>
+All CI platforms require Docker access. Ensure your runner has Docker available.
+</Note>
+
+<Tip>
+If diff-scope fails in CI, fetch full git history (for example, `fetch-depth: 0` in GitHub Actions) so merge-base and branch comparison can be resolved.
+</Tip>

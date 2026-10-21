@@ -1,0 +1,121 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "maple",
+  "name": "pentesin",
+  "colors": {
+    "primary": "#000000",
+    "light": "#ffffff",
+    "dark": "#000000"
+  },
+  "favicon": "/images/favicon-48.ico",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Getting Started",
+            "pages": [
+              "index",
+              "quickstart"
+            ]
+          },
+          {
+            "group": "Usage",
+            "pages": [
+              "usage/cli",
+              "usage/scan-modes",
+              "usage/instructions",
+              "usage/viewer"
+            ]
+          },
+          {
+            "group": "LLM Providers",
+            "pages": [
+              "llm-providers/overview",
+              "llm-providers/openai",
+              "llm-providers/anthropic",
+              "llm-providers/openrouter",
+              "llm-providers/vercel-ai-gateway",
+              "llm-providers/vertex",
+              "llm-providers/bedrock",
+              "llm-providers/azure",
+              "llm-providers/novita",
+              "llm-providers/local"
+            ]
+          },
+          {
+            "group": "Integrations",
+            "pages": [
+              "integrations/github-actions",
+              "integrations/ci-cd",
+              "integrations/coding-agents",
+              "integrations/mcp"
+            ]
+          },
+          {
+            "group": "Tools",
+            "pages": [
+              "tools/overview",
+              "tools/browser",
+              "tools/proxy",
+              "tools/terminal",
+              "tools/sandbox"
+            ]
+          },
+          {
+            "group": "Advanced",
+            "pages": [
+              "advanced/configuration",
+              "advanced/skills",
+              "contributing"
+            ]
+          }
+        ]
+      }
+    ],
+    "global": {
+      "anchors": [
+        {
+          "anchor": "GitHub",
+          "href": "https://github.com/Ghanott/Pentesin",
+          "icon": "github"
+        },
+        {
+          "anchor": "Issues",
+          "href": "https://github.com/Ghanott/Pentesin/issues",
+          "icon": "github"
+        }
+      ]
+    }
+  },
+  "navbar": {
+    "links": [],
+    "primary": {
+      "type": "button",
+      "label": "View on GitHub",
+      "href": "https://github.com/Ghanott/Pentesin"
+    }
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/Ghanott/Pentesin"
+    }
+  },
+  "fonts": {
+    "family": "Geist",
+    "heading": {
+      "family": "Geist"
+    },
+    "body": {
+      "family": "Geist"
+    }
+  },
+  "appearance": {
+    "default": "dark"
+  },
+  "description": "Open-source AI Hackers to secure your Apps",
+  "background": {
+    "decoration": "grid"
+  }
+}
