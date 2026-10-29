@@ -8,10 +8,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Ghanott/Pentesin/tui/internal/protocol"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/Ghanott/Pentesin/tui/internal/protocol"
 )
 
 type recordingConn struct{ bytes.Buffer }
@@ -549,7 +549,7 @@ func TestVulnerabilityDetailScrollsWithoutHidingFooter(t *testing.T) {
 	model.openModal(modalVulnerability)
 
 	view := model.modalView()
-	if !strings.Contains(view, "Done") {
+	if !strings.Contains(view, reportDone) {
 		t.Fatalf("finding footer is not visible before scrolling: %s", view)
 	}
 	_, wantHeight := model.vulnerabilityDialogSize()
@@ -562,7 +562,7 @@ func TestVulnerabilityDetailScrollsWithoutHidingFooter(t *testing.T) {
 	if model.modal != modalVulnerability || model.vulnViewport.YOffset == 0 {
 		t.Fatalf("page down dismissed or did not scroll finding: modal=%v offset=%d", model.modal, model.vulnViewport.YOffset)
 	}
-	if view = model.modalView(); !strings.Contains(view, "Done") {
+	if view = model.modalView(); !strings.Contains(view, reportDone) {
 		t.Fatalf("finding footer disappeared after scrolling: %s", view)
 	}
 
@@ -612,7 +612,7 @@ func TestVulnerabilityCopySupportsKeyboardAndMouse(t *testing.T) {
 	if len(copied) != 1 || !strings.Contains(copied[0], "Copy me") || !strings.Contains(copied[0], "Finding detail") {
 		t.Fatalf("keyboard Copy wrote unexpected report: %#v", copied)
 	}
-	if !model.vulnerabilityCopied || !strings.Contains(ansi.Strip(model.modalView()), "Copied!") {
+	if !model.vulnerabilityCopied || !strings.Contains(ansi.Strip(model.modalView()), "Tersalin!") {
 		t.Fatal("successful keyboard Copy was not reflected in the dialog")
 	}
 
@@ -622,7 +622,7 @@ func TestVulnerabilityCopySupportsKeyboardAndMouse(t *testing.T) {
 	copyX, copyY := -1, -1
 	for row, line := range strings.Split(view, "\n") {
 		plain := ansi.Strip(line)
-		if index := strings.Index(plain, "Copy"); index >= 0 {
+		if index := strings.Index(plain, reportCopy); index >= 0 {
 			copyX, copyY = left+ansi.StringWidth(plain[:index]), top+row
 		}
 	}
@@ -733,7 +733,7 @@ func TestVulnerabilityDetailFitsNarrowTerminal(t *testing.T) {
 	model.openModal(modalVulnerability)
 	view := model.modalView()
 
-	if !strings.Contains(view, "Done") {
+	if !strings.Contains(view, reportDone) {
 		t.Fatalf("finding footer is missing in narrow terminal: %s", view)
 	}
 	if got := len(strings.Split(view, "\n")); got > model.height {
@@ -845,7 +845,7 @@ func TestAgentClickUsesRenderedWindowAfterResize(t *testing.T) {
 	}
 }
 
-func TestFindingTitlesWrapAndViewerCTAIsClickable(t *testing.T) {
+func TestFindingTitlesWrapAndViewerCTAIsHidden(t *testing.T) {
 	model := New(nil)
 	model.width, model.height = 130, 30
 	model.snapshot.Vulnerabilities = []map[string]any{{
@@ -856,16 +856,16 @@ func TestFindingTitlesWrapAndViewerCTAIsClickable(t *testing.T) {
 	if strings.Count(view, "\n") < 1 || strings.Contains(view, "…") {
 		t.Fatalf("finding title was not wrapped: %s", view)
 	}
-	if cta := ansi.Strip(model.viewerView(40)); !strings.Contains(cta, "Watch live in browser") {
-		t.Fatalf("viewer CTA is missing: %s", cta)
+	if cta := ansi.Strip(model.viewerView(40)); cta != "" {
+		t.Fatalf("viewer CTA should be hidden: %s", cta)
 	}
 
 	_, _, chatWidth, _ := model.layout()
 	_, cmd := model.updateMouse(tea.MouseMsg{
 		X: chatWidth + 2, Y: 1, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress,
 	})
-	if cmd == nil {
-		t.Fatal("clicking viewer CTA did not send viewer.open")
+	if cmd != nil {
+		t.Fatal("clicking the former viewer CTA should not send a command")
 	}
 }
 
@@ -1239,6 +1239,33 @@ func TestStatsViewShowsSubscription(t *testing.T) {
 	}
 }
 
+func TestVulnerabilityReportIndonesianLabelsPreserveTechnicalValues(t *testing.T) {
+	finding := map[string]any{
+		"title": "Akses data tanpa autentikasi", "severity": "critical", "cvss": 9.8,
+		"target": "https://lab.example/api", "method": "GET", "cve": "CVE-2024-1234",
+		"cwe": "CWE-306", "description": "Endpoint tidak mewajibkan autentikasi.",
+		"impact": "Data terbatas dapat dibaca.", "technical_analysis": "Pemeriksaan sesi tidak diterapkan.",
+		"evidence": "HTTP/1.1 200 OK", "poc_description": "1. Kirim permintaan tanpa sesi.",
+		"poc_script_code":   "```python\nprint('raw_payload')\n```",
+		"remediation_steps": "Wajibkan autentikasi.", "assumptions": "Data bersifat terbatas.",
+		"cvss_breakdown": map[string]any{"attack_vector": "N", "attack_complexity": "L"},
+	}
+	body := ansi.Strip(vulnerabilityBody(finding))
+	for _, want := range []string{
+		"Laporan Kerentanan", "Judul:", "Tingkat Keparahan: KRITIS", "Skor CVSS: 9.8",
+		"Sasaran: https://lab.example/api", "Metode: GET", "CVE-2024-1234", "CWE-306",
+		"Vektor CVSS: AV:N/AC:L", "Deskripsi", "Dampak", "Analisis Teknis", "Bukti",
+		"Langkah Reproduksi PoC", "Kode PoC", "print('raw_payload')", "Rekomendasi Perbaikan", "Asumsi",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("Indonesian report missing %q:\n%s", want, body)
+		}
+	}
+	if finding["severity"] != "critical" || finding["target"] != "https://lab.example/api" || finding["poc_script_code"] != "```python\nprint('raw_payload')\n```" {
+		t.Fatal("rendering must not modify stored finding values")
+	}
+}
+
 func TestVulnerabilityMarkdownReport(t *testing.T) {
 	report := vulnerabilityMarkdownReport(map[string]any{
 		"title":             "SQLi in login",
@@ -1249,8 +1276,8 @@ func TestVulnerabilityMarkdownReport(t *testing.T) {
 		"remediation_steps": "Use bound parameters.",
 	})
 	for _, want := range []string{
-		"# SQLi in login", "**Severity:** HIGH", "**CVSS:** 8.1",
-		"## Description", "```python\nprint('x')\n```", "## Remediation",
+		"# SQLi in login", "**Tingkat Keparahan:** TINGGI", "**CVSS:** 8.1",
+		"## Deskripsi", "```python\nprint('x')\n```", "## Rekomendasi Perbaikan",
 	} {
 		if !strings.Contains(report, want) {
 			t.Fatalf("report missing %q:\n%s", want, report)

@@ -518,7 +518,7 @@ async def test_list_mcps_returns_healthy_connections_while_slow_catalog_keeps_lo
     monkeypatch.setattr(
         mcp_client, "_build_server", lambda config: _built_server(servers[config.name])
     )
-    monkeypatch.setattr(mcp_agent_tools, "_MCP_DISCOVERY_WAIT_SECONDS", 0.01)
+    monkeypatch.setattr(mcp_agent_tools, "_MCP_DISCOVERY_WAIT_SECONDS", 0.1)
     registry = McpRegistry()
     for name in servers:
         registry.register(McpConnectionRequest(config=_config(name, None)))
@@ -569,7 +569,7 @@ async def test_list_mcps_retains_and_cleans_up_background_catalog_tasks(
     )
     assert entry.session is not None
     monkeypatch.setattr(entry.session, "list_tools", load_catalog)
-    monkeypatch.setattr(mcp_agent_tools, "_MCP_DISCOVERY_WAIT_SECONDS", 0.01)
+    monkeypatch.setattr(mcp_agent_tools, "_MCP_DISCOVERY_WAIT_SECONDS", 0.1)
     loop = asyncio.get_running_loop()
     previous_handler = loop.get_exception_handler()
     loop.set_exception_handler(lambda _loop, context: loop_errors.append(context))

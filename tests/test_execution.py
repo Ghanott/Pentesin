@@ -955,6 +955,49 @@ async def test_crashing_noninteractive_child_settles_and_wakes_its_parent(
 
 
 @pytest.mark.asyncio
+async def test_interactive_agent_resumes_after_error_on_user_prompt(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    coordinator = AgentCoordinator()
+    await coordinator.register("root", "Root", parent_id=None)
+    session = SQLiteSession("root", tmp_path / "agents.db")
+    failed = asyncio.Event()
+    resumed = asyncio.Event()
+    calls = 0
+
+    async def cycle(*_args: Any, **_kwargs: Any) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            failed.set()
+            raise RuntimeError("provider temporarily unavailable")
+        assert any("continue testing" in str(item) for item in await session.get_items())
+        await coordinator.set_status("root", "waiting")
+        resumed.set()
+
+    monkeypatch.setattr(execution, "_run_cycle", cycle)
+    task = asyncio.create_task(execution.run_agent_loop(
+        agent=object(), initial_input="Original target and instructions", run_config=None,
+        context={"agent_id": "root", "parent_id": None}, max_turns=5,
+        coordinator=coordinator, agent_id="root", interactive=True, session=session,
+    ))
+    try:
+        await asyncio.wait_for(failed.wait(), timeout=2)
+        await asyncio.sleep(0)
+        assert not task.done()
+        assert coordinator.statuses["root"] == "failed"
+        assert await coordinator.send("root", {"from": "user", "content": "continue testing"})
+        await asyncio.wait_for(resumed.wait(), timeout=2)
+        assert calls == 2
+        assert "root" not in coordinator.errors
+    finally:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+        session.close()
+
+
+@pytest.mark.asyncio
 async def test_run_agent_loop_seeds_identity_before_first_cycle(
     tmp_path: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:

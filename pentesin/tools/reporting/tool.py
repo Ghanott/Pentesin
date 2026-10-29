@@ -1070,6 +1070,12 @@ async def create_vulnerability_report(
       prompts, internal errors / stack traces, or tester environment.
       Never leak internal identifiers (proxy request IDs, internal
       report IDs) into any field.
+    - Language: write all agent-authored report prose in Bahasa Indonesia,
+      including title, description, impact, technical analysis, evidence
+      explanations, PoC steps, remediation, assumptions, and rationale.
+      Preserve raw evidence quotations, URLs, HTTP methods, identifiers,
+      code/payloads, CVE/CWE, CVSS scores/vectors, and schema enum values.
+      Never translate ``poc_script_code`` or code snippets.
     - Tone: formal, objective, third-person, vendor-neutral, concise.
       Avoid internal-guidance headings like "QUICK", "Approach", or
       "Techniques" that read like an engineering runbook rather than a
@@ -2171,6 +2177,9 @@ async def create_dependency_report(
     **Formatting**: use markdown in text fields (``**bold**``, ``inline
     code`` for package/version identifiers, fenced code blocks for
     manifest excerpts). No internal paths/tooling/agent references.
+    Write all agent-authored report prose in Bahasa Indonesia. Preserve
+    raw evidence quotations, URLs, identifiers, code/payloads, CVE/CWE,
+    CVSS scores/vectors, version strings, and schema enum values.
 
     Args:
         title: e.g. ``"CVE-2024-1234 in lodash 4.17.20 (prototype pollution)"``.

@@ -261,9 +261,6 @@ func (m Model) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if !showSidebar {
 		return m, nil
 	}
-	if y < m.viewerHeight() {
-		return m, send(m.client, "viewer.open", map[string]any{})
-	}
 	rect, ok := m.panelAt(y)
 	if !ok || m.clickPanel(rect, x, y) {
 		return m, nil
@@ -498,12 +495,12 @@ func (m Model) updateModalMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 				return m.pressReportButton(button)
 			}
 		}
-		if m.centeredLabelHit(view, "Copy", msg.X, msg.Y) {
+		if m.centeredLabelHit(view, reportCopy, msg.X, msg.Y) {
 			m.reportFocus = reportCopy
 			cmd := m.startVulnerabilityCopy()
 			return m, cmd
 		}
-		if m.centeredLabelHit(view, "Done", msg.X, msg.Y) {
+		if m.centeredLabelHit(view, reportDone, msg.X, msg.Y) {
 			m.reportFocus = reportDone
 			m.closeModal()
 		}

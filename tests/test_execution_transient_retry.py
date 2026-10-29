@@ -56,6 +56,16 @@ def test_server_errors_are_transient() -> None:
         assert execution._is_transient_model_error(_status_error(status)) is True
 
 
+@pytest.mark.parametrize("message", [
+    'FreeUsageLimitError: Free usage limit reached. Subscribe to OpenCode Go',
+    'insufficient_quota',
+    'quota exhausted',
+])
+def test_exhausted_quota_is_not_retried(message: str) -> None:
+    error = RateLimitError(message, response=httpx.Response(429, request=_request()), body=None)
+    assert execution._is_transient_model_error(error) is False
+
+
 def test_rate_limit_is_retried() -> None:
     rate_limited = RateLimitError(
         "slow down", response=httpx.Response(429, request=_request()), body=None

@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
 from pentesin.tools.coverage.tools import _record_impl, hydrate_coverage_from_disk
-from pentesin.tools.finish.tool import _coverage_summary
+from pentesin.tools.finish.tool import _coverage_summary, _do_finish
 
 
 if TYPE_CHECKING:
@@ -56,6 +56,36 @@ def test_fully_accounted_coverage_raises_no_gap_warning() -> None:
 
     assert "coverage_gaps" not in summary
     assert "coverage_gap_warning" not in summary
+
+
+@pytest.mark.parametrize(
+    "outcome,complete",
+    [("needs_follow_up", False), ("no_issue_found", True), (None, False)],
+)
+def test_finish_distinguishes_incomplete_assessment(
+    monkeypatch: pytest.MonkeyPatch, outcome: str | None, complete: bool
+) -> None:
+    from pentesin.report import state  # noqa: PLC0415
+
+    class Report:
+        vulnerability_reports: tuple[()] = ()
+
+        def update_scan_final_fields(self, **_kwargs: Any) -> None:
+            pass
+
+    monkeypatch.setattr(state, "get_global_report_state", Report)
+    if outcome is not None:
+        _record_impl(
+            surface="GET /", risk_area="reachability", outcome=outcome,
+            evidence="Recorded evidence", agent_id="root", agent_name="Root",
+        )
+    result = _do_finish(
+        parent_id=None, executive_summary="Summary", methodology="Method",
+        technical_analysis="Analysis", recommendations="Follow up", agent_graph={},
+    )
+    assert result["success"] is True
+    assert result["assessment_complete"] is complete
+    assert ("incomplete coverage" in result["message"]) is (not complete)
 
 
 def test_an_empty_ledger_still_warns_first() -> None:

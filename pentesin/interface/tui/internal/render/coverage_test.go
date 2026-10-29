@@ -188,10 +188,10 @@ func TestVulnerabilityReportRendersCalibrationFields(t *testing.T) {
 		map[string]any{"success": true, "severity": "high", "cvss_score": 7.5},
 		"completed")))
 	requireContains(t, out,
-		"Confidence", "MEDIUM", "no authenticated instance to replay against",
-		"Counterevidence", "gateway may strip the id parameter",
-		"Severity Would Change If", "other tenants' bank details",
-		"Fix Verification", "bypass review reasoned only",
+		"Tingkat Keyakinan", "MEDIUM", "no authenticated instance to replay against",
+		"Bukti Penyangkal", "gateway may strip the id parameter",
+		"Kondisi Perubahan Keparahan", "other tenants' bank details",
+		"Verifikasi Perbaikan", "bypass review reasoned only",
 	)
 }
 
@@ -212,10 +212,10 @@ func TestVulnerabilityReportUpdateRendersReportAndReason(t *testing.T) {
 		},
 		"completed")))
 	requireContains(t, out,
-		"Vulnerability Report Updated",
+		"Laporan Kerentanan Diperbarui",
 		"vuln-0009",
 		"built a working unauthenticated file write",
-		"CRITICAL",
+		"KRITIS",
 		"9.3",
 	)
 }

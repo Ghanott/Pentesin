@@ -196,13 +196,12 @@ Examples:
         "-m",
         "--scan-mode",
         type=str,
-        choices=["quick", "standard", "deep"],
+        choices=["standard", "deep"],
         default="deep",
         help=(
             "Scan mode: "
-            "'quick' for fast CI/CD checks, "
-            "'standard' for routine testing, "
-            "'deep' for thorough security reviews (default). "
+            "'standard' for rapid triage + structured testing, "
+            "'deep' for exhaustive security reviews (default). "
             "Default: deep."
         ),
     )

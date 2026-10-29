@@ -51,7 +51,8 @@ def _resolve_skills(
     and fix-verification packs are never loaded.
     """
     ordered: list[str] = list(requested or [])
-    ordered.append(f"scan_modes/{scan_mode}")
+    normalized_mode = "standard" if scan_mode == "quick" else scan_mode
+    ordered.append(f"scan_modes/{normalized_mode}")
     if is_diff_scoped:
         ordered.append("scan_modes/diff")
     ordered.append("tooling/agent_browser")

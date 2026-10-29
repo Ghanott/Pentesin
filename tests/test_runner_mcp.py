@@ -22,8 +22,9 @@ from pentesin.agents import factory
 from pentesin.core import runner
 from pentesin.core.agents import AgentCoordinator
 from pentesin.runtime import session_manager
-from pentesin.tools.mcp import McpConnectionConfig, McpConnectionRequest
+from pentesin.tools.mcp import McpConnectionConfig, McpConnectionRequest, context_mode
 from pentesin.tools.mcp import client as mcp_client
+from pentesin.tools.mcp.context_mode import context_mode_request
 
 
 _test_mcp_client = importlib.import_module("tests.test_mcp_client")
@@ -33,6 +34,74 @@ _mcp_tool: Any = _test_mcp_client._mcp_tool
 
 def _built_server(server: Any) -> Any:
     return mcp_client.BuiltMcpServer(server, None)
+
+
+@pytest.mark.asyncio
+async def test_context_mode_launches_only_inside_the_scan_container() -> None:
+    environment = types.SimpleNamespace(
+        value={"http_proxy": "http://127.0.0.1:48080", "OPENAI_API_KEY": "must-not-leak"}
+    )
+    session = types.SimpleNamespace(
+        state=types.SimpleNamespace(
+            container_id="abc123", manifest=types.SimpleNamespace(environment=environment)
+        )
+    )
+    request = await context_mode_request(session, "web-17")
+    config = request.config
+    assert config.command == "docker"
+    assert config.args[:7] == [
+        "exec",
+        "-i",
+        "--user",
+        "pentester",
+        "--workdir",
+        "/workspace",
+        "abc123",
+    ]
+    assert config.args[7:9] == ["/usr/bin/env", "-i"]
+    assert "CONTEXT_MODE_DIR=/tmp/pentesin-context-mode/web-17" in config.args
+    assert "CONTEXT_MODE_PROJECT_DIR=/workspace" in config.args
+    assert config.env == {}
+    assert "http_proxy=http://127.0.0.1:48080" in config.args
+    assert "must-not-leak" not in " ".join(config.args)
+    assert "ctx_execute" in (config.allowed_tools or [])
+    assert "ctx_purge" not in (config.allowed_tools or [])
+    other = await context_mode_request(session, "web-18")
+    assert other.config.args != config.args
+
+
+@pytest.mark.asyncio
+async def test_context_mode_resolves_deferred_container(monkeypatch: pytest.MonkeyPatch) -> None:
+    resolved = types.SimpleNamespace(state=types.SimpleNamespace(container_id="abc123"))
+
+    class Deferred:
+        async def resolve(self) -> Any:
+            return resolved
+
+    monkeypatch.setattr(context_mode, "DeferredSandboxSession", Deferred)
+    request = await context_mode_request(Deferred(), "web-17")
+    assert "abc123" in request.config.args
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("scan_id", ["", "../scan", "a/b", "scan;id", "é"])
+async def test_context_mode_rejects_invalid_storage_ids(scan_id: str) -> None:
+    with pytest.raises(ValueError, match="invalid scan id"):
+        await context_mode_request(object(), scan_id)
+
+
+@pytest.mark.asyncio
+async def test_context_mode_rejects_non_docker_sandbox() -> None:
+    with pytest.raises(ValueError, match="Docker sandbox"):
+        await context_mode_request(types.SimpleNamespace(state=object()), "web-17")
+
+
+def test_stdio_server_honors_configured_session_timeout() -> None:
+    config = McpConnectionConfig(
+        name="context_mode", transport="stdio", command="docker", session_timeout_seconds=120
+    )
+    built = mcp_client._build_server(config)
+    assert built.server.client_session_timeout_seconds == 120
 
 
 def _settings() -> Any:
@@ -85,6 +154,59 @@ def _wire_runner(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
         return None
 
     monkeypatch.setattr(runner, "run_agent_loop", _run_agent_loop)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("enabled", [False, True])
+async def test_runner_context_mode_is_opt_in_and_preserves_supplied_requests(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any, enabled: bool
+) -> None:
+    _wire_runner(monkeypatch, tmp_path)
+
+    async def create_session(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        session = types.SimpleNamespace(state=types.SimpleNamespace(container_id="abc123"))
+        return {"client": object(), "session": session, "caido_client": None}
+
+    monkeypatch.setattr(session_manager, "create_or_reuse", create_session)
+    captured: list[McpConnectionRequest] = []
+    original_register = mcp_pkg.McpRegistry.register
+
+    def capture(registry: Any, request: McpConnectionRequest) -> Any:
+        captured.append(request)
+        return original_register(registry, request)
+
+    monkeypatch.setattr(mcp_pkg.McpRegistry, "register", capture)
+    supplied = [
+        McpConnectionRequest(config=McpConnectionConfig(name="db", url="https://example.com"))
+    ]
+    await runner.run_pentesin_scan(
+        scan_config={"targets": [], "context_mode": enabled},
+        scan_id="web-17",
+        image="img",
+        coordinator=AgentCoordinator(),
+        mcp_connection_requests=supplied,
+    )
+    assert [request.config.name for request in captured] == (
+        ["db", "context_mode"] if enabled else ["db"]
+    )
+    assert len(supplied) == 1
+
+
+@pytest.mark.asyncio
+async def test_runner_context_mode_failure_does_not_abort_scan(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    _wire_runner(monkeypatch, tmp_path)
+    phases: list[str] = []
+    await runner.run_pentesin_scan(
+        scan_config={"targets": [], "context_mode": True},
+        scan_id="web-17",
+        image="img",
+        coordinator=AgentCoordinator(),
+        mcp_connection_requests=[],
+        status_sink=phases.append,
+    )
+    assert "Context Mode unavailable; continuing without it" in phases
 
 
 @pytest.mark.asyncio

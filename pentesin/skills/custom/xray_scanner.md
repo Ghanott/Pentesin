@@ -6,29 +6,31 @@ description: Drive the Chaitin Xray scanner against one in-scope live target —
 # Xray Scanner
 
 `xray_scan` runs the Chaitin Xray scanner inside the sandbox against **one
-authorized live target**. It crawls, runs xray's plugin set, and returns
-normalized findings.
+recon candidate URL**. It tests that exact path and query using explicitly
+selected plugins and returns normalized findings. Never use Xray for spidering,
+crawling, or indiscriminate host-wide scans.
 
 ## When to use it
 
-- **After recon**, on a host the scan already authorizes. Xray is fast coverage
-  for the classes its plugins carry; it is not a substitute for testing the
-  application's own logic.
+- **After recon identifies a candidate**, not merely a live host. Record the
+  exact URL, path/parameters, suspected bug class, and why the selected plugin
+  applies. For `/search?q=test`, choose `xss` for suspected reflection or `sqldet`
+  for a SQL-backed input. Preserve all query parameters and values.
 - **When you need a second opinion on a candidate.** Xray's result is evidence
   that a payload class reached a sink, not that the finding is exploitable.
 - **When the target answers 403 and you need to know whether the route is truly
   closed.** Pass `bypass_403=True` — see below.
 
-Do **not** use it as the opening move. It is loud: a crawler hits every link it
-can reach. If the engagement calls for stealth, test manually first.
+Do **not** use it as the opening move or as a crawler. Discovery belongs to recon.
+Xray tests only selected candidates within the authorized scope.
 
 ## Arguments
 
 | Argument | Use |
 |---|---|
-| `target` | Absolute http(s) URL on an in-scope host. No query string, no credentials — xray discovers parameters itself. |
-| `mode` | `crawler` (default) follows links; `url` scans only that exact URL. Use `url` for a focused, quiet re-test. |
-| `plugins` | Optional subset, e.g. `["sqldet", "xss"]`. Omit for xray's full default set. Unknown names are rejected. |
+| `target` | Exact in-scope URL found during recon, including path and query. No credentials or fragment. |
+| `mode` | `url` only (default). Crawler mode is refused. |
+| `plugins` | Required nonempty selection relevant to the candidate, e.g. `["xss"]` or `["sqldet"]`. No default full-plugin scan. |
 | `timeout_s` | Wall clock, default 1800, max 7200. |
 | `bypass_403` | Add reachability probes. Off by default. |
 
@@ -42,8 +44,8 @@ with `exec_command`; if a host genuinely belongs in scope, say so and stop.
 `by_severity` is the roll-up. Two things matter more than the count:
 
 - **Zero findings is not a clean bill of health.** It means xray's plugins
-  reached nothing. Check `output_path` and what the crawler actually saw before
-  you record `no_issue_found` in coverage.
+  confirmed nothing on this candidate. Check request reachability and the
+  selected plugins before recording `no_issue_found` for this URL and bug class.
 - **A finding is a lead, not a report.** Reproduce it by hand, confirm the input
   was attacker-controlled, and establish impact before filing. Xray reports
   payload reflection; it does not know whether that reflection executes, or

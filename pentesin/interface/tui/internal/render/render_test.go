@@ -93,7 +93,7 @@ func TestToolDispatchCoversKnownTools(t *testing.T) {
 				map[string]any{"title": "SQL injection in login", "target": "https://x.test"},
 				map[string]any{"severity": "critical", "cvss_score": 9.8},
 				"completed"),
-			[]string{"Vulnerability Report", "SQL injection in login", "CRITICAL", "9.8"},
+			[]string{"Laporan Kerentanan", "SQL injection in login", "KRITIS", "9.8"},
 		},
 		{
 			"create_dependency_report",

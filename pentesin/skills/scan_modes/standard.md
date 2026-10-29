@@ -1,99 +1,45 @@
 ---
 name: standard
-description: Balanced security assessment with systematic methodology and full attack surface coverage
+description: Black-box security assessment combining rapid high-signal triage with systematic attack surface testing
 ---
 
 # Standard Testing Mode
 
-Balanced security assessment with structured methodology. Thorough coverage without exhaustive depth.
+Black-box web and API assessment combining fast high-signal triage with structured coverage of critical user flows and vulnerabilities.
 
-## Approach
+## Phase 1: High-Signal Triage & Reconnaissance
 
-Systematic testing across the full attack surface. Understand the application before exploiting it.
+1. **Fast Exposure Probes (single-request checks, no brute-force loops)**
+   - Config & repo leaks: `/.env`, `/.git/HEAD`, `/.git/config`, `/config.json`, `/phpinfo.php`
+   - API & debug schemas: `/swagger.json`, `/openapi.json`, `/v3/api-docs`, `/graphql` (introspection), `/actuator/env`, `/actuator/heapdump`, `/_next/data/`
+   - Client-side bundles & source maps: inspect main `.js` bundles and `*.js.map` for hardcoded keys, hidden API routes, and role flags
+   - Header/origin quick wins: test CORS (`Origin: https://evil.example`, `Origin: null`, prefix/suffix origins with `Access-Control-Allow-Credentials: true`) and Host/reset-link poisoning (`Host`, `X-Forwarded-Host`)
 
-## Phase 1: Reconnaissance
+2. **Attack Surface Mapping**
+   - Crawl reachable pages, forms, and API endpoints; capture baseline traffic in the proxy
+   - Fingerprint stack, auth mechanism (cookies, JWT, OAuth), and edge/WAF controls (load `waf_bypass` if requests hit `403`/`406`)
+   - Enumerate parameters, content types, and user roles/tenants
 
-**Whitebox (source available)**
-- Map codebase structure: modules, entry points, routing
-- Run `semgrep` first-pass triage to prioritize risky flows before deep manual review
-- Run at least one AST-structural mapping pass (`sg` and/or Tree-sitter), then use outputs for route, sink, and trust-boundary mapping
-- Keep AST output bounded to relevant paths and hypotheses; avoid whole-repo generic function dumps
-- Identify architecture pattern (MVC, microservices, monolith)
-- Trace input vectors: forms, APIs, file uploads, headers, cookies
-- Review authentication and authorization flows
-- Analyze database interactions and ORM usage
-- Check dependencies and repo risks with `trivy fs`, `gitleaks`, and `trufflehog`
-- Understand the data model and sensitive data locations
+## Phase 2: Business Logic & Trust Boundaries
 
-**Blackbox (no source)**
-- Crawl application thoroughly, interact with every feature
-- Enumerate endpoints, parameters, and functionality
-- Fingerprint technology stack
-- Map user roles and access levels
-- Capture traffic with proxy to understand request/response patterns
+Map how the application enforces rules before spraying payloads:
+- **Critical workflows**: login, registration, password reset, checkout/payments, profile/account settings, admin actions
+- **Role & tenant boundaries**: which object IDs, org IDs, or endpoints isolate User A from User B or Admin
+- **State transitions**: multi-step flows, status flags, coupons/quotas, idempotency
 
-## Phase 2: Business Logic Analysis
+## Phase 3: Systematic Vulnerability Testing
 
-Before testing for vulnerabilities, understand the application:
+Spawn focused subagents per surface and vulnerability class. When recon uncovers specific URLs with query parameters or form inputs, use `xray_scan` (`mode="url"`) with targeted plugins alongside manual/scripted testing.
 
-- **Critical flows** - payments, registration, data access, admin functions
-- **Role boundaries** - what actions are restricted to which users
-- **Data access rules** - what data should be isolated between users
-- **State transitions** - order lifecycle, account status changes
-- **Trust boundaries** - where does privilege or sensitive data flow
+- **Access Control & Authz**: IDOR/BOLA (`idor`), broken function-level authorization (`broken_function_level_authorization`), mass assignment (`mass_assignment`)
+- **Authentication & Session**: login bypass, JWT tampering (`authentication_jwt`), OAuth redirect/state flaws (`oauth`), password reset flaws
+- **Injection**: SQLi (`sql_injection`), XSS (`xss`), SSTI (`ssti`), command injection/RCE (`rce`), XXE (`xxe`), NoSQLi (`nosql_injection`)
+- **Server-Side & Parser**: SSRF (`ssrf`), path traversal/LFI (`path_traversal_lfi_rfi`), open redirect (`open_redirect`), duplicate parameter override (`http_parameter_pollution`)
+- **Business Logic**: workflow step skipping, negative/boundary values, replay, and race conditions (`business_logic`, `race_conditions`)
+- **WAF / Filter Evasion**: when an endpoint blocks payloads (`403`/`406`), load `waf_bypass` and test content-type switching (`json` ↔ `urlencoded` ↔ `multipart`), chunked framing, and encoding differentials
 
-## Phase 3: Systematic Testing
+## Phase 4: Validation & Chaining
 
-Test each attack surface methodically. Spawn focused subagents for different areas.
-
-**Input Validation**
-- Injection testing on all input fields (SQL, XSS, command, template)
-- File upload bypass attempts
-- Search and filter parameter manipulation
-- Redirect and URL parameter handling
-
-**Authentication & Session**
-- Brute force protection
-- Session token entropy and handling
-- Password reset flow analysis
-- Logout session invalidation
-- Authentication bypass techniques
-
-**Access Control**
-- Horizontal: user A accessing user B's resources
-- Vertical: unprivileged user accessing admin functions
-- API endpoints vs UI access control consistency
-- Direct object reference manipulation
-
-**Business Logic**
-- Multi-step process bypass (skip steps, reorder)
-- Race conditions on state-changing operations
-- Boundary conditions: negative values, zero, extremes
-- Transaction replay and manipulation
-
-## Phase 4: Exploitation
-
-- Every finding requires a working proof-of-concept
-- Demonstrate actual impact, not theoretical risk
-- Chain vulnerabilities to show maximum severity
-- Document full attack path from entry to impact
-- Use Python scripts through `exec_command` for complex exploit development
-
-## Phase 5: Reporting
-
-- Document all confirmed vulnerabilities with reproduction steps
-- Severity based on exploitability and business impact
-- Remediation recommendations
-- Note areas requiring further investigation
-
-## Chaining
-
-Always ask: "If I can do X, what does that enable next?" Keep pivoting until reaching maximum privilege or data exposure.
-
-Prefer complete end-to-end paths (entry point → pivot → privileged action/data) over isolated findings. Use the application as a real user would—exploit must survive actual workflow and state transitions.
-
-When you discover a useful pivot (info leak, weak boundary, partial access), immediately pursue the next step rather than stopping at the first win.
-
-## Mindset
-
-Methodical and systematic. Document as you go. Validate everything—no assumptions about exploitability. Think about business impact, not just technical severity.
+- Confirm every candidate with a reproducible proof-of-concept and proxy `http_exchange_ids`
+- Chain primitives (e.g., info leak / open redirect / CORS -> token theft / SSRF / ATO) to prove maximum real-world impact
+- Record every tested surface via `record_coverage` before finishing

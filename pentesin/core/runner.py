@@ -457,7 +457,20 @@ async def run_pentesin_scan(
                     McpConnectionRequest(config=config) for config in load_user_mcp_configs()
                 ]
             else:
-                mcp_requests = mcp_connection_requests
+                mcp_requests = list(mcp_connection_requests)
+            if scan_config.get("context_mode") is True:
+                from pentesin.tools.mcp.context_mode import context_mode_request
+
+                try:
+                    request = await context_mode_request(sandbox_session, scan_id)
+                except Exception:
+                    logger.exception("Context Mode unavailable; continuing without it")
+                    report("Context Mode unavailable; continuing without it")
+                else:
+                    mcp_requests = [
+                        item for item in mcp_requests if item.config.name != "context_mode"
+                    ]
+                    mcp_requests.append(request)
             if mcp_requests:
                 for request in mcp_requests:
                     mcp_registry.register(request)

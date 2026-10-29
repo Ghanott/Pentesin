@@ -298,7 +298,7 @@ def _function_tool_with_error_result(tool: FunctionTool) -> FunctionTool:
     async def invoke(ctx: Any, raw_input: str) -> Any:
         try:
             return await _bound_result(await invoke_tool(ctx, raw_input))
-        except Exception as exc:  # noqa: BLE001 - tool errors should be model-visible results.
+        except Exception as exc:  # tool errors should be model-visible results.
             logger.debug("Tool %s failed; returning error as result", tool.name, exc_info=True)
             return _format_tool_error(exc)
 
@@ -313,7 +313,7 @@ def _custom_tool_as_function_tool(tool: CustomTool) -> FunctionTool:
             return f"`{_custom_tool_input_field(tool)}` must be a non-empty string."
         try:
             return await _bound_result(await tool.on_invoke_tool(ctx, custom_input))
-        except Exception as exc:  # noqa: BLE001 - matches SDK CustomTool error-as-result behavior.
+        except Exception as exc:  # matches SDK CustomTool error-as-result behavior.
             logger.debug("Tool %s failed; returning error as result", tool.name, exc_info=True)
             return _format_tool_error(exc)
 
@@ -447,6 +447,7 @@ _EXEC_YIELD_CAP_S = PTY_YIELD_TIME_MS_MAX // 1000
 
 _EXEC_COMMAND_DESCRIPTION_NOTE = (
     f"The wait for output is capped at {_EXEC_YIELD_CAP_S} s whatever yield_time_ms says. "
+    "TTY defaults to true so a running command can be polled with write_stdin. "
     "A non-TTY command still running at the yield cannot be read later (write_stdin fails "
     "on it and its output is lost): run anything longer in the background with its output "
     "redirected to a file (`cmd > /tmp/out.log 2>&1 &`, then read the log), or start it with "
@@ -493,6 +494,7 @@ def _wrap_exec_command(tool: FunctionTool) -> FunctionTool:
         if isinstance(parsed, dict):
             if "shell" not in parsed:
                 parsed["shell"] = "bash"
+            parsed.setdefault("tty", True)
             _apply_shell_output_cap(parsed)
             raw_input = json.dumps(parsed)
         try:

@@ -94,6 +94,21 @@ schema.graphql
 
 .opencode/
 
+# AI agent config, local only (AGENTS.md stays tracked: it is repo documentation)
+.claude/
+.cursor/
+.windsurf/
+.codex/
+.gemini/
+.continue/
+.serena/
+.aider*
+CLAUDE.md
+.mcp.json
+
+# graphify knowledge-graph artifacts (local only, regenerable)
+graphify-out/
+
 # Root-only local data and reference checkouts
 /.benchmarks/
 /references/

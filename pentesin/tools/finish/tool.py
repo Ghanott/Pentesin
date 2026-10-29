@@ -54,7 +54,10 @@ def _do_finish(
             return {
                 "success": True,
                 "scan_completed": True,
-                "message": "Scan completed (not persisted)",
+                "assessment_complete": False,
+                "message": (
+                    "Scan ended without persisted results; assessment completeness is unknown"
+                ),
                 "warning": "Results could not be persisted - report state unavailable",
             }
         report_state.update_scan_final_fields(
@@ -76,7 +79,14 @@ def _do_finish(
         result: dict[str, Any] = {
             "success": True,
             "scan_completed": True,
-            "message": "Scan completed successfully",
+            "message": (
+                "Scan ended with incomplete coverage; follow-up is required"
+                if coverage_summary.get("coverage_warning") or coverage_summary.get("coverage_gaps")
+                else "Scan completed successfully"
+            ),
+            "assessment_complete": not bool(
+                coverage_summary.get("coverage_warning") or coverage_summary.get("coverage_gaps")
+            ),
             "vulnerabilities_found": vuln_count,
         }
         result.update(coverage_summary)
@@ -249,10 +259,12 @@ async def finish_scan(
       so do NOT start a field with a heading such as ``# Executive
       Summary`` — it would print twice. Sub-headings (``##``) inside a
       field are fine.
-    - If **zero** vulnerabilities were found, say so plainly and
-      characterize the posture positively; ``technical_analysis`` should
-      summarize the areas tested and confirm no issues, and
-      ``recommendations`` should focus on general hardening.
+    - If **zero** vulnerabilities were confirmed, say so plainly. Do not
+      characterize the target as safe or the posture as positive unless the
+      recorded testing supports it. Unresolved coverage, unavailable tool
+      output, and untested surfaces mean risk remains undetermined. Resolve
+      recoverable execution problems before finishing; otherwise describe the
+      assessment as incomplete and identify the follow-up required.
 
     Example (abbreviated — mirror this structure, not the wording)::
 

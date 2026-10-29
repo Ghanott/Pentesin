@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/Ghanott/Pentesin/tui/internal/render"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/Ghanott/Pentesin/tui/internal/render"
 )
 
 var panelSeverityColors = map[string]lipgloss.Color{
@@ -320,42 +320,42 @@ func (m Model) confirmDialog(
 func vulnerabilityBody(v map[string]any) string {
 	fieldStyle := render.Bold(render.Field)
 	var b strings.Builder
-	b.WriteString("🐞 " + render.Bold(render.ReportHdr).Render("Vulnerability Report"))
+	b.WriteString("🐞 " + render.Bold(render.ReportHdr).Render("Laporan Kerentanan"))
 
 	field := func(label, value string) {
 		if value != "" {
 			b.WriteString("\n\n" + fieldStyle.Render(label+": ") + value)
 		}
 	}
-	field("Agent", render.StringValue(v["agent_name"]))
-	field("Title", render.StringValue(v["title"]))
+	field("Agen", render.StringValue(v["agent_name"]))
+	field("Judul", render.StringValue(v["title"]))
 	if sev := render.StringValue(v["severity"]); sev != "" {
-		b.WriteString("\n\n" + fieldStyle.Render("Severity: ") +
-			lipgloss.NewStyle().Bold(true).Foreground(render.SeverityColor(sev)).Render(strings.ToUpper(sev)))
+		b.WriteString("\n\n" + fieldStyle.Render("Tingkat Keparahan: ") +
+			lipgloss.NewStyle().Bold(true).Foreground(render.SeverityColor(sev)).Render(render.SeverityLabel(sev)))
 	}
 	if score, ok := render.NumericValue(v["cvss"]); ok {
-		b.WriteString("\n\n" + fieldStyle.Render("CVSS Score: ") +
+		b.WriteString("\n\n" + fieldStyle.Render("Skor CVSS: ") +
 			lipgloss.NewStyle().Bold(true).Foreground(render.CVSSColor(score)).Render(render.StringValue(v["cvss"])))
 	}
-	field("Target", render.StringValue(v["target"]))
+	field("Sasaran", render.StringValue(v["target"]))
 	if dep, ok := v["dependency_metadata"].(map[string]any); ok {
-		field("Package", render.StringValue(dep["package_name"]))
-		field("Ecosystem", render.StringValue(dep["package_ecosystem"]))
-		field("Installed Version", render.StringValue(dep["installed_version"]))
-		field("Fixed Version", render.StringValue(dep["fixed_version"]))
-		field("Introduced By", render.StringValue(dep["introduced_by"]))
-		field("Dependency Chain", render.StringValue(dep["dependency_path"]))
+		field("Paket", render.StringValue(dep["package_name"]))
+		field("Ekosistem", render.StringValue(dep["package_ecosystem"]))
+		field("Versi Terpasang", render.StringValue(dep["installed_version"]))
+		field("Versi Perbaikan", render.StringValue(dep["fixed_version"]))
+		field("Dibawa Oleh", render.StringValue(dep["introduced_by"]))
+		field("Rantai Dependensi", render.StringValue(dep["dependency_path"]))
 	}
 	field("Endpoint", render.StringValue(v["endpoint"]))
-	field("Method", render.StringValue(v["method"]))
+	field("Metode", render.StringValue(v["method"]))
 	field("CVE", render.StringValue(v["cve"]))
 	field("CWE", render.StringValue(v["cwe"]))
 	if fe := render.StringValue(v["fix_effort"]); fe != "" {
-		field("Fix Effort", titleCase(fe))
+		field("Upaya Perbaikan", titleCase(fe))
 	}
 	if bd, ok := v["cvss_breakdown"].(map[string]any); ok && len(bd) > 0 {
 		if parts := render.CVSSVectorParts(bd); len(parts) > 0 {
-			b.WriteString("\n\n" + fieldStyle.Render("CVSS Vector: ") + render.Dim().Render(strings.Join(parts, "/")))
+			b.WriteString("\n\n" + fieldStyle.Render("Vektor CVSS: ") + render.Dim().Render(strings.Join(parts, "/")))
 		}
 	}
 
@@ -364,17 +364,17 @@ func vulnerabilityBody(v map[string]any) string {
 			b.WriteString("\n\n" + fieldStyle.Render(label) + "\n" + value)
 		}
 	}
-	section("Description", render.StringValue(v["description"]))
-	section("Impact", render.StringValue(v["impact"]))
-	section("Technical Analysis", render.StringValue(v["technical_analysis"]))
-	section("Evidence", render.StringValue(v["evidence"]))
-	section("PoC Description", render.StringValue(v["poc_description"]))
+	section("Deskripsi", render.StringValue(v["description"]))
+	section("Dampak", render.StringValue(v["impact"]))
+	section("Analisis Teknis", render.StringValue(v["technical_analysis"]))
+	section("Bukti", render.StringValue(v["evidence"]))
+	section("Langkah Reproduksi PoC", render.StringValue(v["poc_description"]))
 	if poc := render.StringValue(v["poc_script_code"]); poc != "" {
 		pocLang, pocCode := render.ParseFencedCode(poc)
-		b.WriteString("\n\n" + fieldStyle.Render("PoC Code") + "\n" + render.HighlightCode(pocCode, pocLang))
+		b.WriteString("\n\n" + fieldStyle.Render("Kode PoC") + "\n" + render.HighlightCode(pocCode, pocLang))
 	}
-	section("Remediation", render.StringValue(v["remediation_steps"]))
-	section("Assumptions", render.StringValue(v["assumptions"]))
+	section("Rekomendasi Perbaikan", render.StringValue(v["remediation_steps"]))
+	section("Asumsi", render.StringValue(v["assumptions"]))
 	return b.String()
 }
 
@@ -459,10 +459,10 @@ func (m *Model) showVulnerability(index int) {
 // The report's buttons. Prev and Next carry their arrows so a click test cannot
 // be fooled by the same word appearing in the body of a finding.
 const (
-	reportPrev = "‹ Prev"
-	reportNext = "Next ›"
-	reportCopy = "Copy"
-	reportDone = "Done"
+	reportPrev = "‹ Sebelumnya"
+	reportNext = "Berikutnya ›"
+	reportCopy = "Salin"
+	reportDone = "Selesai"
 )
 
 // reportButtons is the row as it stands, left to right. Stepping is offered only
@@ -516,9 +516,9 @@ func (m Model) reportButton(label string, focused bool) string {
 	if label == reportCopy {
 		switch {
 		case m.vulnerabilityCopied:
-			label = "Copied!"
+			label = "Tersalin!"
 		case m.vulnerabilityCopyError != "":
-			label = "Copy failed"
+			label = "Gagal menyalin"
 		}
 	}
 	if focused {

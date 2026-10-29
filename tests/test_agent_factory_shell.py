@@ -37,6 +37,7 @@ async def test_wrap_exec_command_defaults_shell_to_bash() -> None:
     parsed = json.loads(captured["raw_input"])
     assert parsed["cmd"] == "source /tmp/env"
     assert parsed["shell"] == "bash"
+    assert parsed["tty"] is True
     expected_cap = load_settings().context.tool_output_max_tokens
     assert parsed["max_output_tokens"] == expected_cap
 
@@ -103,6 +104,7 @@ def test_wrap_exec_command_describes_the_yield_cap() -> None:
     assert wrapped.description.startswith("Runs a command. The wait for output is capped at 30 s")
     assert "cannot be read later" in wrapped.description
     assert "tty=true" in wrapped.description
+    assert "TTY defaults to true" in wrapped.description
 
 
 @pytest.mark.asyncio
@@ -110,7 +112,8 @@ async def test_wrap_exec_command_flags_a_running_non_tty_process() -> None:
     wrapped = factory._wrap_exec_command(_running_exec_tool(_RUNNING_RESULT))
 
     result = await wrapped.on_invoke_tool(
-        cast("Any", None), json.dumps({"cmd": "sleep 60; curl x", "yield_time_ms": 90000})
+        cast("Any", None),
+        json.dumps({"cmd": "sleep 60; curl x", "yield_time_ms": 90000, "tty": False}),
     )
 
     assert result == (
@@ -126,7 +129,9 @@ async def test_wrap_exec_command_flags_a_running_non_tty_process() -> None:
 async def test_wrap_exec_command_flags_a_running_non_tty_process_within_the_cap() -> None:
     wrapped = factory._wrap_exec_command(_running_exec_tool(_RUNNING_RESULT))
 
-    result = await wrapped.on_invoke_tool(cast("Any", None), json.dumps({"cmd": "sleep 60"}))
+    result = await wrapped.on_invoke_tool(
+        cast("Any", None), json.dumps({"cmd": "sleep 60", "tty": False})
+    )
 
     assert "Note: this non-TTY process cannot be polled" in result
     assert "was capped" not in result

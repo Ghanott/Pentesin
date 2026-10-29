@@ -100,6 +100,11 @@ _SKILL_PHRASINGS: dict[str, tuple[str, ...]] = {
     "business_logic": ("business logic", "logic flaw"),
     "csrf": ("csrf", "cross site request forgery"),
     "header_injection": ("header injection", "host header", "crlf"),
+    "http_parameter_pollution": (
+        "parameter pollution",
+        "hpp",
+        "duplicate parameter",
+    ),
     "http_request_smuggling": ("request smuggling", "desync"),
     "idor": ("idor", "object level authorization", "bola", "direct object reference"),
     "information_disclosure": (
@@ -134,6 +139,7 @@ _SKILL_PHRASINGS: dict[str, tuple[str, ...]] = {
     "ssrf": ("ssrf", "server side request forgery"),
     "ssti": ("ssti", "template injection"),
     "subdomain_takeover": ("subdomain takeover",),
+    "waf_bypass": ("waf bypass", "waf", "filter bypass", "edge filter"),
     "weak_password_detection": ("password", "credential", "brute force"),
     "xss": ("xss", "cross site scripting", "script injection"),
     "xxe": ("xxe", "xml external entity", "xml entity"),

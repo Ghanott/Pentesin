@@ -41,8 +41,8 @@ _TERMS_ACK_ENV = "PENTESIN_XRAY_TERMS_ACCEPTED"
 
 # Xray's documented detection-module keys (its README's "Detection Modules"
 # table). Free-form would let a caller pass something xray silently ignores, so
-# the set is closed and spelled exactly as xray documents it. Omit `plugins`
-# entirely to run xray's own default set instead.
+# the set is closed and spelled exactly as xray documents it. Callers must
+# explicitly select checks relevant to the recon candidate.
 _ALLOWED_PLUGINS: frozenset[str] = frozenset(
     {
         "baseline",
@@ -67,7 +67,7 @@ _ALLOWED_PLUGINS: frozenset[str] = frozenset(
     }
 )
 
-ScanMode = Literal["url", "crawler"]
+ScanMode = Literal["url"]
 
 
 def _ctx_session(ctx: RunContextWrapper) -> BaseSandboxSession | None:
@@ -150,11 +150,8 @@ def _validate_target(  # noqa: PLR0911
     parsed = urlsplit(raw)
     if parsed.username or parsed.password:
         return None, "target must not carry credentials in the URL"
-    if parsed.query or parsed.fragment:
-        return None, (
-            "target must be a base URL without a query string or fragment; "
-            "xray discovers parameters itself."
-        )
+    if parsed.fragment:
+        return None, "target must not contain a URL fragment; pass the exact recon URL and query"
 
     host = (parsed.hostname or "").rstrip(".").lower()
     if not host:
@@ -196,8 +193,13 @@ def _validate_target(  # noqa: PLR0911
 
 def _validate_plugins(plugins: list[str] | None) -> tuple[list[str] | None, str | None]:
     if not plugins:
-        return None, None
+        return None, (
+            "plugins is required: select checks relevant to the recon candidate, e.g. ['xss']"
+        )
+
     requested = [str(p).strip().lower() for p in plugins if str(p).strip()]
+    if not requested:
+        return None, "plugins must include at least one relevant check"
     unknown = sorted(set(requested) - _ALLOWED_PLUGINS)
     if unknown:
         return None, (
@@ -229,13 +231,12 @@ def build_argv(
     json_output: str,
 ) -> list[str]:
     """The exact process argv. Kept separate so it is testable without a sandbox."""
-    argv = [XRAY_BINARY, "webscan"]
-    if mode == "crawler":
-        argv += ["--basic-crawler", url]
-    else:
-        argv += ["--url", url]
-    if plugins:
-        argv += ["--plugins", ",".join(plugins)]
+    if mode != "url":
+        raise ValueError("Xray only supports targeted URL testing; crawling is disabled")
+    selected, error = _validate_plugins(plugins)
+    if error:
+        raise ValueError(error)
+    argv = [XRAY_BINARY, "webscan", "--url", url, "--plugins", ",".join(selected or [])]
     argv += ["--json-output", json_output]
     return argv
 
@@ -324,7 +325,7 @@ async def _read_text(session: BaseSandboxSession, path: str) -> str | None:
 async def _xray_scan_impl(  # noqa: PLR0912, PLR0911, PLR0915
     ctx: RunContextWrapper,
     target: str,
-    mode: ScanMode = "crawler",
+    mode: ScanMode = "url",
     plugins: list[str] | None = None,
     timeout_s: float | None = None,
     bypass_403: bool = False,
@@ -332,14 +333,12 @@ async def _xray_scan_impl(  # noqa: PLR0912, PLR0911, PLR0915
     """Implementation of the ``xray_scan`` tool; see the wrapper for the contract.
 
     Args:
-        target: Absolute http(s) URL of an in-scope host. No query string, no
-            credentials - xray discovers parameters itself.
-        mode: ``crawler`` (default) follows links from the target before
-            scanning; ``url`` scans only the exact URL, which is faster and
-            quieter but sees one page.
-        plugins: Optional subset of xray plugin names, e.g. ``["sqldet",
-            "xss"]``. Omit to run xray's full default set. Unknown names are
-            rejected rather than silently dropped.
+        target: Exact in-scope URL discovered during recon, including its path
+            and query parameters. No credentials or fragments.
+        mode: Only ``url`` is supported. Crawling and spidering are disabled.
+        plugins: Explicit nonempty checks selected for this recon candidate,
+            e.g. ``["xss"]`` for a reflected search parameter or ``["sqldet"]``
+            for a suspected SQL-backed input. Unknown names are rejected.
         timeout_s: Wall-clock limit for the scan, default 1800, max 7200.
         bypass_403: Also test the target with path and header variants for a
             reachability bypass - useful when the target answers 403 and you
@@ -378,6 +377,11 @@ async def _xray_scan_impl(  # noqa: PLR0912, PLR0911, PLR0915
     if session is None:
         return json.dumps({"success": False, "error": "no sandbox session is attached to this run"})
 
+    if mode != "url":
+        return json.dumps({
+            "success": False,
+            "error": "Xray crawling is disabled; test the exact recon URL with mode='url'",
+        })
     chosen_plugins, error = _validate_plugins(plugins)
     if error:
         return json.dumps({"success": False, "error": error, "target": target})
@@ -428,10 +432,10 @@ async def _xray_scan_impl(  # noqa: PLR0912, PLR0911, PLR0915
                 "target": url,
                 "argv": argv,
                 "error": f"xray exceeded {int(timeout)}s and was stopped. "
-                "Narrow it with plugins=[...] or mode='url', or raise timeout_s.",
+                "Select fewer relevant plugins or raise timeout_s.",
             }
         )
-    except Exception as exc:  # noqa: BLE001 - scanner failures are model-visible results
+    except Exception as exc:  # scanner failures are model-visible results
         logger.debug("xray_scan failed to start", exc_info=True)
         with contextlib.suppress(Exception):
             await session.rm(output_dir, recursive=True)
@@ -507,8 +511,8 @@ async def _xray_scan_impl(  # noqa: PLR0912, PLR0911, PLR0915
     elif not findings:
         result["note"] = (
             "xray reported no findings. That means its plugins reached nothing "
-            "in this scan - not that the target is clean. Check what the crawler "
-            "actually saw before closing this surface."
+            "at this candidate URL - not that the target is clean. Check the selected "
+            "plugins and request reachability before closing this surface."
         )
     return json.dumps(result)
 
@@ -598,7 +602,7 @@ async def _probe_403_bypass(
         ]
         try:
             result = await session.exec(*argv, timeout=min(remaining, 20), shell=False)
-        except Exception:  # noqa: BLE001 - a failed probe is not a finding
+        except Exception:  # a failed probe is not a finding
             logger.debug("403 bypass probe %s failed", label, exc_info=True)
             continue
 
@@ -628,31 +632,29 @@ async def _probe_403_bypass(
 async def xray_scan(
     ctx: RunContextWrapper,
     target: str,
-    mode: ScanMode = "crawler",
+    mode: ScanMode = "url",
     plugins: list[str] | None = None,
     timeout_s: float | None = None,
     bypass_403: bool = False,
 ) -> str:
     """Run the Chaitin Xray scanner against one in-scope live target.
 
-    Xray crawls the target and runs its vulnerability plugins, then this returns
-    the normalized findings. Use it after recon, on a host the scan already
-    authorizes - the target is checked against the run's scope and refused if it
-    is not on it.
+    Use only after recon identifies a specific URL/path/parameter with a plausible
+    vulnerability supported by an Xray plugin. Preserve the candidate URL and
+    query exactly and choose only relevant plugins. This tool never crawls or
+    spiders the site. The URL must belong to the run's authorized scope.
 
     It is a scanner, not an oracle: it proves what its plugins can reach
     unauthenticated. Anything behind a login, a multi-step flow, or a payload
     xray does not carry still has to be tested by hand.
 
     Args:
-        target: Absolute http(s) URL of an in-scope host. No query string, no
-            credentials - xray discovers parameters itself.
-        mode: ``crawler`` (default) follows links from the target before
-            scanning; ``url`` scans only the exact URL, which is faster and
-            quieter but sees one page.
-        plugins: Optional subset of xray plugin names, e.g. ``["sqldet",
-            "xss"]``. Omit to run xray's full default set. Unknown names are
-            rejected rather than silently dropped.
+        target: Exact in-scope URL discovered during recon, including its path
+            and query parameters. No credentials or fragments.
+        mode: Only ``url`` is supported. Crawling and spidering are disabled.
+        plugins: Explicit nonempty checks selected for this recon candidate,
+            e.g. ``["xss"]`` for a reflected search parameter or ``["sqldet"]``
+            for a suspected SQL-backed input. Unknown names are rejected.
         timeout_s: Wall-clock limit for the scan, default 1800, max 7200.
         bypass_403: Also test the target with path and header variants for a
             reachability bypass - useful when the target answers 403 and you

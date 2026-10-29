@@ -13,6 +13,7 @@ import pytest
 from agents.tool import FunctionTool
 
 from pentesin.agents import factory
+from pentesin.agents.prompt import render_system_prompt
 from pentesin.tools.agents_graph.tools import agent_finish
 from pentesin.tools.finish.tool import finish_scan
 from pentesin.tools.reporting.tool import create_vulnerability_report
@@ -43,3 +44,28 @@ def test_create_vulnerability_report_explains_confidence_rationale() -> None:
     rationale = schema["confidence_rationale"]["description"]
     assert "Required when" in rationale
     assert "high" in rationale
+
+
+@pytest.mark.parametrize(
+    "tool",
+    [
+        tool
+        for tool in _SCAN_AGENT_TOOLS
+        if tool.name in {"create_vulnerability_report", "create_dependency_report"}
+    ],
+    ids=lambda tool: tool.name,
+)
+def test_report_tools_require_indonesian_prose(tool: FunctionTool) -> None:
+    assert "Bahasa Indonesia" in tool.description
+    assert "CVE/CWE" in tool.description
+    assert "schema enum values" in tool.description
+    assert "code/payloads" in tool.description
+
+
+@pytest.mark.parametrize("is_root", [True, False])
+def test_report_language_in_system_prompt(is_root: bool) -> None:
+    prompt = render_system_prompt(is_root=is_root, skills=[])
+    assert "REPORT LANGUAGE:" in prompt
+    assert "Bahasa Indonesia" in prompt
+    assert "Never translate PoC code" in prompt
+    assert "Apply this to new reports and report updates" in prompt

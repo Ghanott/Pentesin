@@ -56,12 +56,9 @@ class _Ctx:
 IN_SCOPE = "https://app.example.com"
 
 
-def test_build_argv_uses_argv_list_not_a_shell_string() -> None:
-    argv = xray.build_argv(
-        url=IN_SCOPE, mode="crawler", plugins=None, json_output="/workspace/.xray/a.json"
-    )
-    assert argv[:3] == ["xray", "webscan", "--basic-crawler"]
-    assert argv[-2:] == ["--json-output", "/workspace/.xray/a.json"]
+def test_build_argv_rejects_crawling() -> None:
+    with pytest.raises(ValueError, match="crawling is disabled"):
+        xray.build_argv(url=IN_SCOPE, mode="crawler", plugins=["xss"], json_output="/out.json")
 
 
 def test_build_argv_url_mode_and_plugins() -> None:
@@ -85,9 +82,10 @@ def test_scope_config_fences_host_port_disables_redirects_and_limits_crawl() -> 
 def test_xray_scan_argv_loads_config_before_subcommand() -> None:
     report_path = f"{xray._RESULTS_DIR}/report.json"
     config_path = f"{xray._RESULTS_DIR}/config.yaml"
-    argv = xray._xray_scan_argv(IN_SCOPE, "crawler", None, report_path, config_path)
+    argv = xray._xray_scan_argv(IN_SCOPE, "url", ["xss"], report_path, config_path)
     assert argv[:4] == ["xray", "--config", config_path, "webscan"]
-    assert "--basic-crawler" in argv
+    assert "--basic-crawler" not in argv
+    assert "--url" in argv
 
 
 def test_validate_target_accepts_an_authorized_host() -> None:
@@ -128,11 +126,15 @@ def test_validate_target_refuses_a_bare_host() -> None:
     assert "absolute http(s) URL" in (error or "")
 
 
-def test_validate_target_refuses_credentials_and_query() -> None:
+def test_validate_target_refuses_credentials_but_preserves_query() -> None:
     _, error = xray._validate_target("https://u:p@app.example.com", [IN_SCOPE])
     assert "credentials" in (error or "")
-    _, error = xray._validate_target(IN_SCOPE + "/?a=b", [IN_SCOPE])
-    assert "query string" in (error or "")
+    target = IN_SCOPE + "/search?q=a%26b&id=1&id=2"
+    url, error = xray._validate_target(target, [IN_SCOPE])
+    assert error is None
+    assert url == target
+    _, error = xray._validate_target(target + "#fragment", [IN_SCOPE])
+    assert "fragment" in (error or "")
 
 
 def test_validate_target_refuses_when_the_run_has_no_scope() -> None:
@@ -144,6 +146,20 @@ def test_validate_plugins_rejects_unknown_names() -> None:
     plugins, error = xray._validate_plugins(["sqldet", "not-a-plugin"])
     assert plugins is None
     assert "not-a-plugin" in (error or "")
+
+
+@pytest.mark.parametrize('plugins', [None, [], [' ', '']])
+def test_explicit_plugins_required(plugins) -> None:
+    assert xray._validate_plugins(plugins)[1] is not None
+
+
+async def test_scan_rejects_crawler_and_missing_plugins(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv('PENTESIN_XRAY_TERMS_ACCEPTED', '1')
+    session = _FakeSession()
+    for kwargs in ({'mode': 'crawler', 'plugins': ['xss']}, {}):
+        result = json.loads(await xray._xray_scan_impl(_Ctx(session), IN_SCOPE, **kwargs))
+        assert result['success'] is False
+    assert session.calls == []
 
 
 def test_validate_timeout_bounds() -> None:
@@ -233,7 +249,7 @@ async def test_xray_scan_runs_in_scope_and_normalizes_findings(
         ]
     )
     session = _FakeSession(report=report)
-    result = json.loads(await xray._xray_scan_impl(_Ctx(session), IN_SCOPE, mode="url"))
+    result = json.loads(await xray._xray_scan_impl(_Ctx(session), IN_SCOPE + '/x?id=1', plugins=['sqldet']))
 
     assert result["success"] is True
     assert result["count"] == 1
@@ -243,6 +259,8 @@ async def test_xray_scan_runs_in_scope_and_normalizes_findings(
     assert session.calls[0][:2] == ("xray", "--config")
     assert "--config" in session.calls[0]
     assert "--url" in session.calls[0]
+    assert IN_SCOPE + '/x?id=1' in session.calls[0]
+    assert '--basic-crawler' not in session.calls[0]
 
 
 async def test_xray_scan_reports_timeout_as_a_result(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -253,7 +271,7 @@ async def test_xray_scan_reports_timeout_as_a_result(monkeypatch: pytest.MonkeyP
             self.calls.append(tuple(str(a) for a in argv))
             raise TimeoutError
 
-    result = json.loads(await xray._xray_scan_impl(_Ctx(_TimeoutSession()), IN_SCOPE, timeout_s=1))
+    result = json.loads(await xray._xray_scan_impl(_Ctx(_TimeoutSession()), IN_SCOPE, plugins=['xss'], timeout_s=1))
     assert result["success"] is False
     assert "exceeded" in result["error"]
 
@@ -267,7 +285,7 @@ async def test_xray_scan_without_a_session_fails_closed(monkeypatch: pytest.Monk
 async def test_xray_scan_requires_license_acknowledgment(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("PENTESIN_XRAY_TERMS_ACCEPTED", raising=False)
     session = _FakeSession()
-    result = json.loads(await xray._xray_scan_impl(_Ctx(session), IN_SCOPE))
+    result = json.loads(await xray._xray_scan_impl(_Ctx(session), IN_SCOPE, plugins=['xss']))
     assert result["success"] is False
     assert "accepts its license and disclaimer" in result["error"]
     assert session.calls == []
@@ -288,11 +306,11 @@ async def test_bypass_probes_are_labelled_and_off_by_default(
             return _Result()
 
     session = _ProbeSession()
-    await xray._xray_scan_impl(_Ctx(session), IN_SCOPE)
+    await xray._xray_scan_impl(_Ctx(session), IN_SCOPE, plugins=['xss'])
     assert not any(call[0] == "curl" for call in session.calls)
 
     session = _ProbeSession()
-    result = json.loads(await xray._xray_scan_impl(_Ctx(session), IN_SCOPE, bypass_403=True))
+    result = json.loads(await xray._xray_scan_impl(_Ctx(session), IN_SCOPE, plugins=['xss'], bypass_403=True))
     probes = [f for f in result["findings"] if f["plugin"] == "403-bypass"]
     assert probes, "expected labelled bypass probes"
     assert all(f["severity"] == "info" for f in probes)
@@ -333,7 +351,7 @@ async def test_xray_scan_reads_a_report_from_the_real_async_read_contract(
     """A report on disk must come back as findings, not silently as zero."""
     report = json.dumps({"plugin": "xss", "severity": "medium", "target": {"url": IN_SCOPE + "/p"}})
     session = _FakeSession(report=report)
-    result = json.loads(await xray._xray_scan_impl(_Ctx(session), IN_SCOPE))
+    result = json.loads(await xray._xray_scan_impl(_Ctx(session), IN_SCOPE, plugins=['xss']))
     assert result["count"] == 1
     assert "note" not in result, "a readable report must not be reported as 'no findings'"
 

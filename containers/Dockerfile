@@ -109,6 +109,7 @@ RUN npm install -g retire@latest && \
     npm install -g @ast-grep/cli@latest && \
     npm install -g tree-sitter-cli@latest && \
     npm install -g agent-browser@0.26.0 && \
+    npm install -g context-mode@1.0.169 && \
     npm cache clean --force && \
     # ast-grep ships two identical binaries (`ast-grep` and `sg`); dedupe (~52MB)
     ln -sf ast-grep /home/pentester/.npm-global/lib/node_modules/@ast-grep/cli/sg

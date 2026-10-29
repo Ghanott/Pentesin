@@ -8,10 +8,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
-	"github.com/charmbracelet/x/ansi"
 	"github.com/Ghanott/Pentesin/tui/internal/protocol"
 	"github.com/Ghanott/Pentesin/tui/internal/render"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // eventSpan records which content lines of the chat trace belong to an
@@ -703,7 +703,7 @@ func (m Model) viewerView(width int) string {
 	case "failed":
 		return truncate(lipgloss.NewStyle().Foreground(red).Render("Viewer failed to start"), width)
 	default:
-		return truncate(lipgloss.NewStyle().Foreground(textColor).Render("▶ Watch live in browser"), width)
+		return ""
 	}
 }
 

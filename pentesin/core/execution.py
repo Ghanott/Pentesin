@@ -183,6 +183,16 @@ def _is_transient_model_error(exc: BaseException) -> bool:
     ):
         return True
     code = _model_error_status_code(exc)
+    if code == 429 and any(
+        marker in str(exc).lower()
+        for marker in (
+            "freeusagelimiterror",
+            "free usage limit reached",
+            "insufficient_quota",
+            "quota exhausted",
+        )
+    ):
+        return False
     if code is not None:
         return code >= 400 and code not in (401, 402, 403, 404)
     return isinstance(exc, APIError)
