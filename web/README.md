@@ -5,7 +5,7 @@ Laravel dashboard for one private Pentesin workspace: black-box web/API scans, a
 ## Requirements
 
 - PHP 8.4+, Composer 2, Node.js 24+
-- PostgreSQL for the application database
+- MySQL 8.0+ (or MariaDB 10.6+) for the application database
 - Docker Engine/Desktop available to the Python runner
 - Pentesin sandbox image `pentesin-sandbox:latest`
 
@@ -21,13 +21,13 @@ npm ci
 npm run build
 ```
 
-Edit `.env`: set `APP_URL`, PostgreSQL credentials, and a fresh high-entropy `PENTESIN_RUNNER_TOKEN` (at least 48 characters). Keep `.env` private; never commit it. Example token generation:
+Edit `.env`: set `APP_URL`, MySQL credentials, and a fresh high-entropy `PENTESIN_RUNNER_TOKEN` (at least 48 characters). Keep `.env` private; never commit it. Example token generation:
 
 ```powershell
 $bytes = [byte[]]::new(48); [Security.Cryptography.RandomNumberGenerator]::Fill($bytes); [Convert]::ToBase64String($bytes)
 ```
 
-Create the PostgreSQL database and restricted DB user first, then:
+Create the MySQL database and restricted DB user first, then:
 
 ```powershell
 php artisan migrate --force
@@ -55,7 +55,7 @@ Open `http://127.0.0.1:8000/login`, sign in, add an LLM profile, run its connect
 
 ## Private VPS deployment
 
-Use Nginx + PHP-FPM, PostgreSQL, and a separate systemd runner process. Terminate HTTPS at Nginx. Keep PostgreSQL, runner control routes, Docker API/socket, and sandbox ports off the public interface. The runner control route is protected with a high-entropy bearer token, but Nginx must not expose `/api/internal/runner/*`; bind the runner bridge to loopback, or use a private network/VPN and firewall rule that cannot be overridden by client-supplied forwarded-IP headers. The runner requires Docker privileges (effectively root-equivalent on the Docker host), so run it as a dedicated account on an isolated host/VM and restrict sandbox egress to the approved lab targets. Set unique `APP_KEY`, `PENTESIN_RUNNER_TOKEN`, DB credentials, and LLM profile keys in protected environment files. Back up PostgreSQL and private artifact storage. Do not seed default users or enable public signup.
+Use Nginx + PHP-FPM, MySQL, and a separate systemd runner process. Terminate HTTPS at Nginx. Keep MySQL, runner control routes, Docker API/socket, and sandbox ports off the public interface. The runner control route is protected with a high-entropy bearer token, but Nginx must not expose `/api/internal/runner/*`; bind the runner bridge to loopback, or use a private network/VPN and firewall rule that cannot be overridden by client-supplied forwarded-IP headers. The runner requires Docker privileges (effectively root-equivalent on the Docker host), so run it as a dedicated account on an isolated host/VM and restrict sandbox egress to the approved lab targets. Set unique `APP_KEY`, `PENTESIN_RUNNER_TOKEN`, DB credentials, and LLM profile keys in protected environment files. Back up MySQL and private artifact storage. Do not seed default users or enable public signup.
 
 This dashboard has no multi-tenant boundary yet. Keep it private/VPN/IP-restricted until multi-user ownership and authorization are independently reviewed.
 
