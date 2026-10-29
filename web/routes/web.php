@@ -24,5 +24,6 @@ Route::middleware('auth')->group(function (): void {
     Route::get('/scans/{scan}/feed', [DashboardController::class, 'feed'])->name('scans.feed');
     Route::post('/scans/{scan}/messages', [DashboardController::class, 'message'])->middleware('throttle:30,1')->name('scans.messages');
     Route::post('/scans/{scan}/stop', [DashboardController::class, 'stop'])->name('scans.stop');
+    Route::delete('/scans/{scan}', [DashboardController::class, 'destroy'])->name('scans.destroy');
     Route::get('/scans/{scan}/artifacts/{name}', [DashboardController::class, 'artifact'])->name('scans.artifacts');
 });

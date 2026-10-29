@@ -142,9 +142,23 @@ class DashboardController extends Controller
         return back()->with('status', 'Permintaan berhenti dicatat. Tunggu cleanup runner.');
     }
 
+    public function destroy(Request $request, Scan $scan): RedirectResponse
+    {
+        $scan = $this->ownedScan($request, $scan);
+        abort_if($scan->active(), 409, 'Hentikan pemindaian sebelum menghapus.');
+
+        DB::transaction(function () use ($scan): void {
+            Storage::disk('local')->deleteDirectory("pentesin_runs/web-{$scan->id}");
+            $scan->delete();
+        });
+
+        return redirect()->route('scans.history')->with('status', 'Pemindaian dihapus.');
+    }
+
     private function profileData(Request $request, bool $updating = false): array
     {
         $data = $request->validate([
+            'name' => ['required', 'string', 'max:120'],
             'model' => ['required', 'string', 'max:200'],
             'api_base' => ['required', 'url:http,https', 'max:2048', function (string $attribute, mixed $value, \Closure $fail): void {
                 if ($value && (parse_url($value, PHP_URL_USER) !== null || parse_url($value, PHP_URL_PASS) !== null || parse_url($value, PHP_URL_QUERY) !== null || parse_url($value, PHP_URL_FRAGMENT) !== null)) {
@@ -160,8 +174,8 @@ class DashboardController extends Controller
             $data['api_key'] = null;
         }
         unset($data['clear_key']);
+        $data['name'] = trim($data['name']);
         $data['model'] = trim($data['model']);
-        $data['name'] = mb_substr($data['model'], 0, 120);
         $data['api_type'] = 'chat_completions';
 
         return $data;

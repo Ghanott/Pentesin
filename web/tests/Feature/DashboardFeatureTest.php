@@ -24,14 +24,14 @@ class DashboardFeatureTest extends TestCase
     public function test_profile_api_key_is_encrypted_and_never_returned_to_settings(): void
     {
         $this->actingAs(User::factory()->create())->post(route('profiles.store'), [
-            'model' => 'hunter', 'api_base' => 'http://localhost:20128/v1', 'api_key' => 'test-secret-key',
+            'name' => 'Hunter lokal', 'model' => 'hunter', 'api_base' => 'http://localhost:20128/v1', 'api_key' => 'test-secret-key',
         ])->assertRedirect(route('settings'));
         $profile = LlmProfile::firstOrFail();
         $this->assertNotSame('test-secret-key', $profile->getRawOriginal('api_key'));
         $this->assertSame('test-secret-key', $profile->api_key);
-        $this->assertSame('hunter', $profile->name);
+        $this->assertSame('Hunter lokal', $profile->name);
         $this->assertSame('openai/hunter', $profile->runnerProfile()['model']);
-        $this->actingAs(User::first())->get(route('settings'))->assertOk()->assertDontSee('test-secret-key')->assertSee('Key tersembunyi')->assertDontSee('Nama profil')->assertDontSee('API route')->assertDontSee('tool calling');
+        $this->actingAs(User::first())->get(route('settings'))->assertOk()->assertDontSee('test-secret-key')->assertSee('Key tersimpan')->assertSee('Hunter lokal')->assertDontSee('API route')->assertDontSee('tool calling');
     }
 
     public function test_connection_test_returns_inline_status_without_redirecting_to_scan(): void
