@@ -198,4 +198,60 @@ class DashboardFeatureTest extends TestCase
         $this->assertNotSame('echo-secret', $scan->fresh()->getRawOriginal('llm_snapshot'));
         $this->assertStringNotContainsString('echo-secret', json_encode($event->data));
     }
+
+    public function test_user_can_view_scan_report_in_id_and_en(): void
+    {
+        $user = User::factory()->create();
+        $scan = Scan::create([
+            'user_id' => $user->id,
+            'kind' => 'scan',
+            'target' => 'https://target.local',
+            'mode' => 'standard',
+            'status' => 'completed',
+            'llm_snapshot' => [],
+            'artifacts' => ['vulnerabilities.json', 'penetration_test_report.md'],
+            'findings' => [
+                ['id' => 'vuln-2', 'title' => 'Medium Risk Issue', 'severity' => 'medium', 'cvss' => 5.4],
+                ['id' => 'vuln-1', 'title' => 'Critical Remote Code Execution', 'severity' => 'critical', 'cvss' => 9.8],
+            ],
+        ]);
+
+        // Indonesian report
+        $resId = $this->actingAs($user)->get(route('scans.report', [$scan, 'lang' => 'id']))->assertOk();
+        $resId->assertSee('Laporan Pengujian Penetrasi');
+        $resId->assertSee('Critical Remote Code Execution');
+        $resId->assertSee('Tingkat Risiko Kritis');
+
+        // English report
+        $resEn = $this->actingAs($user)->get(route('scans.report', [$scan, 'lang' => 'en']))->assertOk();
+        $resEn->assertSee('Security Assessment Report');
+        $resEn->assertSee('Critical Remote Code Execution');
+        $resEn->assertSee('Critical Risk Posture');
+
+        // Other user is forbidden (404)
+        $otherUser = User::factory()->create();
+        $this->actingAs($otherUser)->get(route('scans.report', $scan))->assertNotFound();
+    }
+
+    public function test_scan_page_renders_pdf_report_button(): void
+    {
+        $user = User::factory()->create();
+        $scan = Scan::create([
+            'user_id' => $user->id,
+            'kind' => 'scan',
+            'target' => 'https://target.local',
+            'mode' => 'standard',
+            'status' => 'completed',
+            'llm_snapshot' => [],
+            'artifacts' => ['penetration_test_report.md', 'vulnerabilities.json'],
+            'findings' => [
+                ['id' => 'vuln-1', 'title' => 'SQL Injection', 'severity' => 'critical'],
+            ],
+        ]);
+
+        $response = $this->actingAs($user)->get(route('scans.show', $scan))->assertOk();
+        $response->assertSee('vulnerabilities.json');
+        $response->assertSee('Laporan PDF');
+        $response->assertSee(route('scans.report', $scan));
+    }
 }

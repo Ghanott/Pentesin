@@ -44,6 +44,7 @@ ARTIFACT_NAMES = (
     "vulnerabilities.json",
     "findings.sarif",
     "coverage.json",
+    "report_narratives.json",
 )
 
 

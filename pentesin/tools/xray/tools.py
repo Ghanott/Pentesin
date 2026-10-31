@@ -191,13 +191,28 @@ def _validate_target(  # noqa: PLR0911
     return None, f"{host} is out of scope for this run. Authorized hosts: {known}"
 
 
+def _terms_accepted() -> bool:
+    if os.getenv(_TERMS_ACK_ENV, "0").lower() in {"1", "true", "yes"}:
+        return True
+    try:
+        from pentesin.config.loader import load_settings
+
+        return bool(load_settings().integrations.xray_terms_accepted)
+    except Exception:
+        return False
+
+
 def _validate_plugins(plugins: list[str] | None) -> tuple[list[str] | None, str | None]:
     if not plugins:
         return None, (
             "plugins is required: select checks relevant to the recon candidate, e.g. ['xss']"
         )
 
-    requested = [str(p).strip().lower() for p in plugins if str(p).strip()]
+    requested = [
+        str(p).strip().lower().replace("_", "-")
+        for p in plugins
+        if str(p).strip()
+    ]
     if not requested:
         return None, "plugins must include at least one relevant check"
     unknown = sorted(set(requested) - _ALLOWED_PLUGINS)
@@ -359,7 +374,7 @@ async def _xray_scan_impl(  # noqa: PLR0912, PLR0911, PLR0915
     if error:
         return json.dumps({"success": False, "error": error, "target": target})
 
-    if os.getenv(_TERMS_ACK_ENV, "0").lower() not in {"1", "true", "yes"}:
+    if not _terms_accepted():
         return json.dumps(
             {
                 "success": False,

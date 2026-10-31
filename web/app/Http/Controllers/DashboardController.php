@@ -40,7 +40,191 @@ class DashboardController extends Controller
         $this->expireOwnerLeases();
         abort_unless($scan->user_id === request()->user()->id, 404);
 
-        return view('scan', ['scan' => $scan->fresh(), 'artifacts' => array_intersect($scan->artifacts ?? [], ['penetration_test_report.md', 'vulnerabilities.json', 'findings.sarif', 'coverage.json'])]);
+        return view('scan', ['scan' => $scan->fresh(), 'artifacts' => array_intersect($scan->artifacts ?? [], ['penetration_test_report.md', 'vulnerabilities.json'])]);
+    }
+
+    public function report(Request $request, Scan $scan): View
+    {
+        $this->expireOwnerLeases();
+        abort_unless($scan->user_id === request()->user()->id, 404);
+
+        $lang = $request->query('lang', 'id') === 'en' ? 'en' : 'id';
+        $findings = $scan->findings ?? [];
+
+        $narrativesPath = "pentesin_runs/web-{$scan->id}/report_narratives.json";
+        $hasAiReport = false;
+        if (Storage::disk('local')->exists($narrativesPath)) {
+            $narrativesData = json_decode(Storage::disk('local')->get($narrativesPath), true);
+            if (is_array($narrativesData) && ! empty($narrativesData['findings'])) {
+                $hasAiReport = true;
+                $mapped = [];
+                foreach ($narrativesData['findings'] as $idx => $item) {
+                    $key = null;
+                    if (isset($item['finding_id']) && is_string($item['finding_id'])) {
+                        $key = $item['finding_id'];
+                    } elseif (isset($item['id']) && is_string($item['id'])) {
+                        $key = $item['id'];
+                    }
+                    if ($key) {
+                        $mapped[$key] = $item;
+                    }
+                    $mapped["idx_{$idx}"] = $item;
+                }
+                foreach ($findings as $idx => &$f) {
+                    $fId = $f['id'] ?? null;
+                    $transContainer = ($fId && isset($mapped[$fId])) ? $mapped[$fId] : ($mapped["idx_{$idx}"] ?? null);
+                    if ($transContainer && isset($transContainer[$lang]) && is_array($transContainer[$lang])) {
+                        $trans = $transContainer[$lang];
+                        if (! empty($trans['title'])) {
+                            $f['title'] = $trans['title'];
+                        }
+                        if (! empty($trans['description'])) {
+                            $f['description'] = $trans['description'];
+                        }
+                        if (! empty($trans['impact'])) {
+                            $f['impact'] = $trans['impact'];
+                        }
+                        if (! empty($trans['technical_analysis'])) {
+                            $f['technical_analysis'] = $trans['technical_analysis'];
+                        }
+                        if (! empty($trans['remediation'])) {
+                            $f['remediation_steps'] = $trans['remediation'];
+                        }
+                        if (! empty($trans['remediation_steps'])) {
+                            $f['remediation_steps'] = $trans['remediation_steps'];
+                        }
+                    }
+                }
+                unset($f);
+            }
+        }
+
+        $severityOrder = ['critical' => 0, 'high' => 1, 'medium' => 2, 'low' => 3, 'info' => 4];
+        usort($findings, function (array $a, array $b) use ($severityOrder): int {
+            $sevA = strtolower($a['severity'] ?? 'info');
+            $sevB = strtolower($b['severity'] ?? 'info');
+
+            return ($severityOrder[$sevA] ?? 5) <=> ($severityOrder[$sevB] ?? 5);
+        });
+
+        return view('report', [
+            'scan' => $scan->fresh(),
+            'findings' => $findings,
+            'lang' => $lang,
+            'hasAiReport' => $hasAiReport,
+        ]);
+    }
+
+    public function synthesizeReport(Request $request, Scan $scan): JsonResponse
+    {
+        @ini_set('max_execution_time', '300');
+        @set_time_limit(300);
+
+        $this->expireOwnerLeases();
+        $this->ownedScan($request, $scan);
+
+        $findings = $scan->findings ?? [];
+        if (empty($findings)) {
+            return response()->json(['success' => false, 'error' => 'Tidak ada temuan kerentanan untuk diparafrase.']);
+        }
+
+        $snapshot = $scan->llm_snapshot;
+        if (empty($snapshot['api_base']) || empty($snapshot['model'])) {
+            $profile = $scan->llm_profile_id ? LlmProfile::find($scan->llm_profile_id) : null;
+            if (! $profile) {
+                $profile = LlmProfile::where('user_id', $request->user()->id)->first();
+            }
+            if ($profile) {
+                $snapshot = [
+                    'api_base' => $profile->api_base,
+                    'api_key' => $profile->api_key,
+                    'model' => $profile->model,
+                    'api_type' => 'chat_completions',
+                ];
+            }
+        }
+
+        if (empty($snapshot['api_base']) || empty($snapshot['model'])) {
+            return response()->json(['success' => false, 'error' => 'Konfigurasi LLM tidak ditemukan. Atur profil LLM di menu Pengaturan.'], 422);
+        }
+
+        $base = rtrim($snapshot['api_base'] ?: 'https://api.openai.com/v1', '/');
+        $endpoint = str_ends_with($base, '/chat/completions') ? $base : $base.'/chat/completions';
+        $model = str_starts_with($snapshot['model'], 'openai/') ? substr($snapshot['model'], 7) : $snapshot['model'];
+
+        $payloadFindings = [];
+        foreach ($findings as $f) {
+            $payloadFindings[] = [
+                'id' => $f['id'] ?? 'vuln-'.uniqid(),
+                'title' => $f['title'] ?? '',
+                'severity' => $f['severity'] ?? 'info',
+                'target' => $f['target'] ?? '',
+                'endpoint' => $f['endpoint'] ?? '',
+                'cwe' => $f['cwe'] ?? '',
+                'description' => $f['description'] ?? '',
+                'impact' => $f['impact'] ?? '',
+                'technical_analysis' => $f['technical_analysis'] ?? '',
+                'remediation_steps' => $f['remediation_steps'] ?? '',
+            ];
+        }
+
+        $prompt = "You are a Principal Penetration Tester and Lead Security Auditor. Paraphrase and synthesize publication-grade vulnerability reports for an international cybersecurity audit.\n";
+        $prompt .= "Target findings input (JSON):\n".json_encode($payloadFindings, JSON_UNESCAPED_SLASHES)."\n\n";
+        $prompt .= "REQUIREMENTS:\n";
+        $prompt .= "1. For EACH finding, produce both an English (HackerOne VRT standard) and an Indonesian (BSSN / ISO 27001 standard) version.\n";
+        $prompt .= "2. The English version ('en') must be 100% natural, fluent, professional English (no Indonesian words).\n";
+        $prompt .= "3. The Indonesian version ('id') must be 100% formal, authoritative Indonesian cybersecurity terminology.\n";
+        $prompt .= "4. Provide high-quality 'title', 'description', 'impact', 'technical_analysis', and 'remediation' for both languages.\n";
+        $prompt .= "5. Return ONLY a valid JSON object matching this schema, no markdown wrapping, no explanation:\n";
+        $prompt .= "{\n  \"findings\": [\n    {\n      \"finding_id\": \"string\",\n      \"en\": {\n        \"title\": \"...\",\n        \"description\": \"...\",\n        \"impact\": \"...\",\n        \"technical_analysis\": \"...\",\n        \"remediation\": \"...\"\n      },\n      \"id\": {\n        \"title\": \"...\",\n        \"description\": \"...\",\n        \"impact\": \"...\",\n        \"technical_analysis\": \"...\",\n        \"remediation\": \"...\"\n      }\n    }\n  ]\n}";
+
+        $caBundle = base_path('../.venv/Lib/site-packages/certifi/cacert.pem');
+        $client = Http::timeout(120)->acceptJson()->withOptions(['verify' => is_file($caBundle) ? $caBundle : false]);
+        if (filled($snapshot['api_key'] ?? null)) {
+            $client = $client->withToken($snapshot['api_key']);
+        }
+
+        try {
+            $res = $client->post($endpoint, [
+                'model' => $model,
+                'messages' => [
+                    ['role' => 'system', 'content' => 'You are an expert security report synthesizer. Output strictly valid JSON without code fences or surrounding commentary.'],
+                    ['role' => 'user', 'content' => $prompt],
+                ],
+                'temperature' => 0.2,
+                'max_tokens' => 4000,
+            ]);
+
+            if (! $res->successful()) {
+                $err = data_get($res->json(), 'error.message') ?: ('HTTP '.$res->status());
+
+                return response()->json(['success' => false, 'error' => 'Gagal menghubungi LLM: '.$err], 502);
+            }
+
+            $rawContent = data_get($res->json(), 'choices.0.message.content') ?? '';
+            $trimmed = trim((string) $rawContent);
+            if (str_starts_with($trimmed, '```')) {
+                $trimmed = preg_replace('/^```(?:json)?\s*/i', '', $trimmed);
+                $trimmed = preg_replace('/\s*```$/', '', $trimmed);
+            }
+
+            $parsed = json_decode($trimmed, true);
+            if (! is_array($parsed) || empty($parsed['findings'])) {
+                return response()->json(['success' => false, 'error' => 'Format respons LLM tidak valid sebagai JSON temuan.'], 502);
+            }
+
+            $narrativesPath = "pentesin_runs/web-{$scan->id}/report_narratives.json";
+            Storage::disk('local')->put($narrativesPath, json_encode($parsed, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+
+            $artifacts = $scan->artifacts ?? [];
+            if (! in_array('report_narratives.json', $artifacts, true)) {
+                $scan->update(['artifacts' => array_values(array_unique([...$artifacts, 'report_narratives.json']))]);
+            }
+
+            return response()->json(['success' => true, 'count' => count($parsed['findings'])]);
+        } catch (\Throwable $e) {
+            return response()->json(['success' => false, 'error' => 'Kesalahan sistem saat sintesis: '.$e->getMessage()], 500);
+        }
     }
 
     public function store(Request $request): RedirectResponse
@@ -258,7 +442,7 @@ class DashboardController extends Controller
 
     public function storeArtifact(Request $request, Scan $scan, string $name): JsonResponse
     {
-        abort_unless(in_array($name, ['penetration_test_report.md', 'vulnerabilities.json', 'findings.sarif', 'coverage.json'], true), 404);
+        abort_unless(in_array($name, ['penetration_test_report.md', 'vulnerabilities.json', 'findings.sarif', 'coverage.json', 'report_narratives.json'], true), 404);
         $data = $request->validate(['lease_token' => ['required', 'string'], 'content_base64' => ['required', 'string', 'max:1400000']]);
         $bytes = base64_decode($data['content_base64'], true);
         abort_if($bytes === false || strlen($bytes) > 1_000_000, 413);
@@ -280,7 +464,7 @@ class DashboardController extends Controller
     public function artifact(Request $request, Scan $scan, string $name): StreamedResponse
     {
         abort_unless($scan->user_id === $request->user()->id, 404);
-        abort_unless(in_array($name, ['penetration_test_report.md', 'vulnerabilities.json', 'findings.sarif', 'coverage.json'], true) && in_array($name, $scan->artifacts ?? [], true), 404);
+        abort_unless(in_array($name, ['penetration_test_report.md', 'vulnerabilities.json', 'findings.sarif', 'coverage.json', 'report_narratives.json'], true) && in_array($name, $scan->artifacts ?? [], true), 404);
         $path = "pentesin_runs/web-{$scan->id}/{$name}";
         abort_unless(Storage::disk('local')->exists($path), 404);
 

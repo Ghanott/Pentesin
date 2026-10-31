@@ -26,8 +26,14 @@ if ($CheckOnly) {
 
 $hadToken = Test-Path Env:PENTESIN_RUNNER_TOKEN
 $previousToken = $env:PENTESIN_RUNNER_TOKEN
+$hadXray = Test-Path Env:PENTESIN_XRAY_TERMS_ACCEPTED
+$previousXray = $env:PENTESIN_XRAY_TERMS_ACCEPTED
 try {
     $env:PENTESIN_RUNNER_TOKEN = $token
+    $xrayLine = Get-Content -LiteralPath $envFile | Where-Object { $_ -match '^\s*PENTESIN_XRAY_TERMS_ACCEPTED\s*=' } | Select-Object -Last 1
+    if ($xrayLine -and $xrayLine -match '^\s*PENTESIN_XRAY_TERMS_ACCEPTED\s*=\s*(.*)$') {
+        $env:PENTESIN_XRAY_TERMS_ACCEPTED = $Matches[1].Trim().Trim('"', "'")
+    }
     & uv run --offline python -m pentesin.interface.web_runner --base-url $BaseUrl
     exit $LASTEXITCODE
 } finally {
@@ -35,5 +41,10 @@ try {
         $env:PENTESIN_RUNNER_TOKEN = $previousToken
     } else {
         Remove-Item Env:PENTESIN_RUNNER_TOKEN -ErrorAction SilentlyContinue
+    }
+    if ($hadXray) {
+        $env:PENTESIN_XRAY_TERMS_ACCEPTED = $previousXray
+    } else {
+        Remove-Item Env:PENTESIN_XRAY_TERMS_ACCEPTED -ErrorAction SilentlyContinue
     }
 }

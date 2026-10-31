@@ -91,6 +91,264 @@ export function startScanWorkspace(root) {
             get('message-status').textContent = 'Instruksi dikirim ke agent, bukan shell server.';
         }
     };
+    function renderCleanToolArgs(args, body) {
+        if (!args || typeof args !== 'object') {
+            return make('div', 'clean-cmd-box', body);
+        }
+        if (args.cmd || args.command || Array.isArray(args.commands)) {
+            const cmdBox = make('div', 'clean-cmd-box');
+            const prompt = make('span', 'cmd-prompt', '$');
+            const cmdText = make('code', 'cmd-text', body);
+            cmdBox.append(prompt, cmdText);
+            return cmdBox;
+        }
+        if (args.thought) {
+            const thoughtBox = make('div', 'clean-thought-box');
+            thoughtBox.textContent = args.thought;
+            return thoughtBox;
+        }
+        if (args.task) {
+            const taskBox = make('div', 'clean-task-box');
+            const head = make('div', 'task-meta-heading');
+            head.append(make('span', 'task-name-badge', args.name ?? 'Subagent'), make('span', 'task-label', 'Instruksi Tugas:'));
+            taskBox.append(head, make('div', 'task-text', args.task));
+            if (Array.isArray(args.skills) && args.skills.length) {
+                const tags = make('div', 'param-tags');
+                for (const s of args.skills) tags.append(make('span', 'param-tag skill', s));
+                taskBox.append(tags);
+            }
+            return taskBox;
+        }
+        const grid = make('div', 'clean-params-grid');
+        for (const [key, val] of Object.entries(args)) {
+            if (val === null || val === undefined) continue;
+            const row = make('div', 'param-row');
+            row.append(make('span', 'param-key', key.replace(/_/g, ' ')));
+            let valEl;
+            if (Array.isArray(val)) {
+                valEl = make('div', 'param-tags');
+                for (const item of val) {
+                    valEl.append(make('span', 'param-tag', typeof item === 'object' ? JSON.stringify(item) : String(item)));
+                }
+            } else if (typeof val === 'boolean') {
+                valEl = make('span', `param-tag bool-${val}`, val ? 'ya' : 'tidak');
+            } else if (typeof val === 'object') {
+                valEl = make('pre', 'param-raw-json', text(val));
+            } else {
+                valEl = make('span', 'param-val', String(val));
+            }
+            row.append(valEl);
+            grid.append(row);
+        }
+        return grid.children.length ? grid : make('div', 'clean-empty-param', '(tanpa parameter)');
+    }
+
+    function renderCleanResult(res) {
+        if (res === null || res === undefined) {
+            return make('div', 'clean-result-empty', '(tidak ada data hasil)');
+        }
+        let parsed = res;
+        if (typeof res === 'string') {
+            const trimmed = res.trim();
+            if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+                try { parsed = JSON.parse(trimmed); } catch { /* Keep string */ }
+            }
+        }
+        if (typeof parsed === 'object' && parsed !== null) {
+            if (Array.isArray(parsed)) {
+                if (!parsed.length) return make('div', 'clean-result-empty', 'Daftar kosong (0 hasil)');
+                const listCard = make('div', 'clean-items-list');
+                for (let i = 0; i < Math.min(parsed.length, 10); i++) {
+                    const item = parsed[i];
+                    const row = make('div', 'clean-item-entry');
+                    if (typeof item === 'object' && item !== null) {
+                        const title = item.title ?? item.plugin ?? item.addr ?? item.name ?? item.target?.url ?? `#${i + 1}`;
+                        const sub = item.detail?.title ?? item.description ?? (typeof item.target === 'string' ? item.target : '');
+                        row.append(make('strong', 'item-title', title));
+                        if (sub) row.append(make('span', 'item-sub', sub));
+                    } else {
+                        row.textContent = String(item);
+                    }
+                    listCard.append(row);
+                }
+                if (parsed.length > 10) {
+                    listCard.append(make('div', 'clean-more-note', `+ ${parsed.length - 10} entri lainnya`));
+                }
+                return listCard;
+            }
+
+            if (parsed.outcome_counts !== undefined || (parsed.total_count !== undefined && Array.isArray(parsed.entries))) {
+                const covCard = make('div', 'clean-coverage-card');
+                const head = make('div', 'clean-coverage-head');
+                head.append(make('strong', 'coverage-title', 'Rekapitulasi Cakupan Pengujian (Coverage)'));
+                covCard.append(head);
+
+                const outcomeLabels = {
+                    reported: 'Ditemukan Celah',
+                    ruled_out: 'Dikesampingkan (Aman)',
+                    no_issue_found: 'Tidak Ada Celah',
+                    needs_follow_up: 'Perlu Follow-up',
+                    untested: 'Belum Diuji'
+                };
+
+                const statsRow = make('div', 'clean-stats-row');
+                if (parsed.total_count !== undefined) {
+                    const pill = make('div', 'stat-pill total');
+                    pill.append(make('span', 'stat-pill-label', 'Total Area'), make('strong', 'stat-pill-val', String(parsed.total_count)));
+                    statsRow.append(pill);
+                }
+                if (parsed.outcome_counts && typeof parsed.outcome_counts === 'object') {
+                    for (const [k, v] of Object.entries(parsed.outcome_counts)) {
+                        const pill = make('div', `stat-pill outcome-${k}`);
+                        const lbl = outcomeLabels[k] ?? k.replace(/_/g, ' ');
+                        pill.append(make('span', 'stat-pill-label', lbl), make('strong', 'stat-pill-val', String(v)));
+                        statsRow.append(pill);
+                    }
+                }
+                covCard.append(statsRow);
+
+                if (Array.isArray(parsed.entries)) {
+                    if (parsed.entries.length === 0) {
+                        const emptyNote = make('div', 'coverage-empty-state');
+                        emptyNote.textContent = parsed.filtered_count === 0 && parsed.total_count > 0
+                            ? `Tidak ada area pengujian yang berstatus ini (${parsed.total_count} area lainnya sudah berstatus aman atau dilaporkan).`
+                            : 'Belum ada data cakupan pengujian.';
+                        covCard.append(emptyNote);
+                    } else {
+                        const listWrap = make('div', 'coverage-entries-list');
+                        for (let i = 0; i < Math.min(parsed.entries.length, 12); i++) {
+                            const entry = parsed.entries[i];
+                            const item = make('div', 'coverage-entry-item');
+                            const top = make('div', 'coverage-entry-top');
+                            top.append(make('code', 'coverage-surface', entry.surface ?? entry.target ?? 'Target'));
+                            if (entry.outcome) {
+                                const outPill = make('span', `outcome-tag outcome-${entry.outcome}`, outcomeLabels[entry.outcome] ?? entry.outcome);
+                                top.append(outPill);
+                            }
+                            item.append(top);
+                            if (entry.risk_area) {
+                                item.append(make('div', 'coverage-risk', `Kategori: ${entry.risk_area}`));
+                            }
+                            if (entry.evidence) {
+                                item.append(make('div', 'coverage-evidence', entry.evidence));
+                            }
+                            listWrap.append(item);
+                        }
+                        if (parsed.entries.length > 12) {
+                            listWrap.append(make('div', 'clean-more-note', `+ ${parsed.entries.length - 12} area pengujian lainnya`));
+                        }
+                        covCard.append(listWrap);
+                    }
+                }
+                return covCard;
+            }
+
+            const container = make('div', 'clean-result-container');
+            if (parsed.error) {
+                const errBox = make('div', 'clean-result-error');
+                errBox.append(make('span', 'error-icon', '✕'), make('div', 'error-text', String(parsed.error)));
+                container.append(errBox);
+            }
+            if (parsed.message && !parsed.error) {
+                container.append(make('div', 'clean-result-msg', String(parsed.message)));
+            }
+            if (parsed.note && !parsed.message) {
+                container.append(make('div', 'clean-result-note', String(parsed.note)));
+            }
+            const stats = [];
+            if (parsed.total_count !== undefined) stats.push({ label: 'Total', val: parsed.total_count });
+            if (parsed.filtered_count !== undefined && parsed.filtered_count > 0) stats.push({ label: 'Tersaring', val: parsed.filtered_count });
+            if (parsed.outcome_counts && typeof parsed.outcome_counts === 'object') {
+                for (const [k, v] of Object.entries(parsed.outcome_counts)) {
+                    stats.push({ label: k.replace(/_/g, ' '), val: v });
+                }
+            }
+            if (parsed.count !== undefined && parsed.total_count === undefined) stats.push({ label: 'Jumlah', val: parsed.count });
+            if (stats.length) {
+                const statsRow = make('div', 'clean-stats-row');
+                for (const s of stats) {
+                    const pill = make('div', 'stat-pill');
+                    pill.append(make('span', 'stat-pill-label', s.label), make('strong', 'stat-pill-val', String(s.val)));
+                    statsRow.append(pill);
+                }
+                container.append(statsRow);
+            }
+            const skip = new Set(['error', 'message', 'note', 'total_count', 'filtered_count', 'outcome_counts', 'count', 'success', 'entries', 'connections', 'findings']);
+            const kvList = make('div', 'clean-kv-list');
+            let hasKv = false;
+            for (const [k, v] of Object.entries(parsed)) {
+                if (skip.has(k) || v === null || v === undefined) continue;
+                hasKv = true;
+                const row = make('div', 'clean-kv-row');
+                row.append(make('span', 'clean-kv-key', k.replace(/_/g, ' ')));
+                let valEl;
+                if (typeof v === 'boolean') {
+                    valEl = make('span', `clean-tag bool-${v}`, v ? 'ya' : 'tidak');
+                } else if (Array.isArray(v)) {
+                    valEl = make('div', 'clean-tags');
+                    for (const item of v) {
+                        valEl.append(make('span', 'clean-tag', typeof item === 'object' ? JSON.stringify(item) : String(item)));
+                    }
+                } else if (typeof v === 'object') {
+                    valEl = make('pre', 'clean-nested-pre', text(v));
+                } else {
+                    valEl = make('span', 'clean-kv-val', String(v));
+                }
+                row.append(valEl);
+                kvList.append(row);
+            }
+            if (hasKv) container.append(kvList);
+
+            const listKey = ['connections', 'findings', 'entries'].find(k => Array.isArray(parsed[k]));
+            if (listKey) {
+                const arr = parsed[listKey];
+                if (arr.length > 0) {
+                    const listCard = make('div', 'clean-items-list');
+                    for (let i = 0; i < Math.min(arr.length, 8); i++) {
+                        const item = arr[i];
+                        const row = make('div', 'clean-item-entry');
+                        if (typeof item === 'object' && item !== null) {
+                            const title = item.title ?? item.name ?? item.target ?? item.id ?? `#${i + 1}`;
+                            const sub = item.description ?? item.state ?? '';
+                            row.append(make('strong', 'item-title', title));
+                            if (sub) row.append(make('small', 'item-sub', sub));
+                        } else {
+                            row.textContent = String(item);
+                        }
+                        listCard.append(row);
+                    }
+                    if (arr.length > 8) {
+                        listCard.append(make('div', 'clean-more-note', `+ ${arr.length - 8} lainnya`));
+                    }
+                    container.append(listCard);
+                }
+            }
+            if (!container.children.length) {
+                if (parsed.success !== undefined) {
+                    container.append(make('span', `clean-tag bool-${parsed.success}`, parsed.success ? 'Operasi berhasil' : 'Operasi selesai'));
+                } else {
+                    container.append(make('pre', 'clean-output-pre', text(parsed)));
+                }
+            }
+            return container;
+        }
+
+        const str = String(res);
+        const chunkMatch = str.match(/^Chunk ID: [a-f0-9]+\s*\n(?:Wall time: ([0-9.]+ seconds)\s*\n)?(?:Process exited with code (\d+)\s*\n)?Output:\s*\n?([\s\S]*)$/);
+        if (chunkMatch) {
+            const [, time, code, out] = chunkMatch;
+            const box = make('div', 'clean-output-block');
+            const metaBar = make('div', 'output-meta-bar');
+            const codeNum = code ?? '0';
+            metaBar.append(make('span', `exit-badge ${codeNum === '0' ? 'success' : 'fail'}`, `Exit ${codeNum}`));
+            if (time) metaBar.append(make('span', 'output-time', time));
+            box.append(metaBar, make('pre', 'clean-output-pre', out.trim() || '(tidak ada output)'));
+            return box;
+        }
+
+        return make('pre', 'clean-output-pre', str);
+    }
+
     const appendTranscript = () => {
         if (!selected) return;
         let added = false;
@@ -103,26 +361,40 @@ export function startScanWorkspace(root) {
             rendered.add(key); added = true;
             const data = event.data ?? {};
             const previous = [...transcript.children].find(node => node.dataset.eventId === eventId);
-            const item = make('article', `event ${event.type === 'user_message' || data.role === 'user' ? 'user' : ''} ${data.metadata?.source === 'agent_error' || data.status === 'failed' ? 'is-error' : ''}`);
+            const isUser = event.type === 'user_message' || data.role === 'user';
+            const isError = data.metadata?.source === 'agent_error' || data.status === 'failed';
+            const item = make('article', `event ${isUser ? 'user' : ''} ${isError ? 'is-error' : ''}`);
             item.dataset.eventId = eventId;
             const meta = make('div', 'event-meta');
-            const toolName = data.name ?? data.tool_name ?? event.type ?? 'Aktivitas';
+            const defaultName = isUser ? 'Operator' : (event.type === 'chat' ? 'Agent' : 'Aktivitas');
+            const toolName = data.name ?? data.tool_name ?? defaultName;
             const statusLabel = data.status === 'running' ? 'berjalan' : data.status === 'completed' ? 'selesai' : data.status === 'failed' ? 'gagal' : '';
-            meta.append(make('strong', '', statusLabel ? `${toolName} · ${statusLabel}` : toolName), make('span', '', event.created_at ? new Date(event.created_at).toLocaleTimeString('id-ID') : `#${event.id}`));
+
+            const titleWrap = make('div', 'event-title-wrap');
+            titleWrap.append(make('strong', 'event-name', toolName));
+            if (statusLabel) {
+                titleWrap.append(make('span', `event-status-tag status-${data.status}`, statusLabel));
+            }
+            meta.append(titleWrap, make('span', 'event-time', event.created_at ? new Date(event.created_at).toLocaleTimeString('id-ID') : `#${event.id}`));
+
             let body;
             if (event.type === 'tool') {
                 let args = data.args;
                 if (typeof args === 'string') { try { args = JSON.parse(args); } catch { /* Keep plain command text. */ } }
                 body = args?.cmd ?? args?.command ?? (Array.isArray(args?.commands) ? args.commands.map(command => command.command ?? command).join('\n') : text(args ?? '(argumen tidak tersedia)'));
+                item.append(meta, renderCleanToolArgs(args, body));
             } else {
-                body = typeof data === 'string' ? data : text(data.content ?? data.text ?? data.message ?? data);
-                if (typeof body === 'object' && body !== null) body = text(body.content ?? body.text ?? body);
+                const rawContent = typeof data === 'string' ? data : (data.content ?? data.text ?? data.message);
+                if (rawContent === null || rawContent === undefined || String(rawContent).trim() === '') {
+                    continue;
+                }
+                body = typeof rawContent === 'object' ? text(rawContent) : String(rawContent);
+                item.append(meta, make('div', 'clean-chat-message', body));
             }
-            item.append(meta, make('pre', '', body));
             if (event.type === 'tool' && data.result !== undefined && data.result !== null) {
                 const output = make('details', 'command-output');
                 output.open = text(data.result).length < 1200 || data.status === 'failed';
-                output.append(make('summary', '', 'Hasil command'), make('pre', '', text(data.result)));
+                output.append(make('summary', '', 'Hasil command'), renderCleanResult(data.result));
                 item.append(output);
             }
             if (previous) previous.replaceWith(item); else transcript.append(item);
@@ -136,7 +408,9 @@ export function startScanWorkspace(root) {
         cy.nodes().unselect(); cy.getElementById(selected).select();
         if (cy.zoom() < 0.42) { cy.animate({ center: { eles: cy.getElementById(selected) }, zoom: 0.75, duration: 220 }); }
         get('agent-modal-title').textContent = agent.name ?? selected;
-        get('agent-modal-status').textContent = statuses[agent.status] ?? agent.status;
+        const modalStatus = get('agent-modal-status');
+        modalStatus.textContent = statuses[agent.status] ?? agent.status;
+        modalStatus.dataset.status = agent.status ?? '';
         rendered = new Set(); transcript.replaceChildren(); follow = true;
         get('agent-message').value = ''; pendingCommand = null;
         get('message-status').textContent = 'Instruksi dikirim ke agent, bukan shell server.';
@@ -234,7 +508,13 @@ export function startScanWorkspace(root) {
         }
         if (!list.length) accessible.append(make('p', 'side-empty', 'Belum ada agent.'));
         get('agent-list-count').textContent = String(list.length);
-        if (selected) { get('agent-modal-status').textContent = statuses[agents.get(selected)?.status] ?? 'Tidak aktif'; updateComposer(); }
+        if (selected) {
+            const currentAgent = agents.get(selected);
+            const modalStatus = get('agent-modal-status');
+            modalStatus.textContent = statuses[currentAgent?.status] ?? 'Tidak aktif';
+            modalStatus.dataset.status = currentAgent?.status ?? '';
+            updateComposer();
+        }
     };
     const showFinding = (f, source) => {
         opener = source; get('finding-modal-title').textContent = f.title ?? 'Kerentanan';
@@ -249,13 +529,34 @@ export function startScanWorkspace(root) {
     const updateArtifacts = (list) => {
         const container = get('scan-artifacts');
         container.replaceChildren();
-        const allowed = new Set(['penetration_test_report.md', 'vulnerabilities.json', 'findings.sarif', 'coverage.json']);
+        const allowed = new Set(['penetration_test_report.md', 'vulnerabilities.json']);
+        let renderedPdf = false;
         for (const name of list) {
             if (!allowed.has(name)) continue;
             const link = make('a', 'report-btn', name);
             link.href = `${location.pathname}/artifacts/${encodeURIComponent(name)}`;
             link.insertAdjacentHTML('afterbegin', '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>');
             container.append(link);
+
+            if (name === 'vulnerabilities.json') {
+                const pdfLink = make('a', 'report-btn is-pdf', 'Laporan PDF');
+                pdfLink.href = `${location.pathname}/report`;
+                pdfLink.target = '_blank';
+                pdfLink.rel = 'noopener';
+                pdfLink.title = 'Lihat dan cetak Laporan PDF (Standar HackerOne / PTES)';
+                pdfLink.insertAdjacentHTML('afterbegin', '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 6 2 18 2 18 9"></polyline><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path><rect x="6" y="14" width="12" height="8"></rect></svg>');
+                container.append(pdfLink);
+                renderedPdf = true;
+            }
+        }
+        if (!renderedPdf && ['completed', 'stopped'].includes(status)) {
+            const pdfLink = make('a', 'report-btn is-pdf', 'Laporan PDF');
+            pdfLink.href = `${location.pathname}/report`;
+            pdfLink.target = '_blank';
+            pdfLink.rel = 'noopener';
+            pdfLink.title = 'Lihat dan cetak Laporan PDF (Standar HackerOne / PTES)';
+            pdfLink.insertAdjacentHTML('afterbegin', '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 6 2 18 2 18 9"></polyline><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path><rect x="6" y="14" width="12" height="8"></rect></svg>');
+            container.append(pdfLink);
         }
     };
     const updateFindings = (list) => {

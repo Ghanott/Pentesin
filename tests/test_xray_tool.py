@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -54,6 +55,14 @@ class _Ctx:
 
 
 IN_SCOPE = "https://app.example.com"
+
+
+@pytest.fixture(autouse=True)
+def _reset_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from pentesin.config import loader
+
+    monkeypatch.setattr(loader, "_cached", None)
+    monkeypatch.setattr(loader, "_override", tmp_path / "empty-config.json")
 
 
 def test_build_argv_rejects_crawling() -> None:
@@ -146,6 +155,12 @@ def test_validate_plugins_rejects_unknown_names() -> None:
     plugins, error = xray._validate_plugins(["sqldet", "not-a-plugin"])
     assert plugins is None
     assert "not-a-plugin" in (error or "")
+
+
+def test_validate_plugins_normalizes_underscores() -> None:
+    plugins, error = xray._validate_plugins(["cmd_injection", "path_traversal", "xss"])
+    assert error is None
+    assert plugins == ["cmd-injection", "path-traversal", "xss"]
 
 
 @pytest.mark.parametrize('plugins', [None, [], [' ', '']])
@@ -289,6 +304,24 @@ async def test_xray_scan_requires_license_acknowledgment(monkeypatch: pytest.Mon
     assert result["success"] is False
     assert "accepts its license and disclaimer" in result["error"]
     assert session.calls == []
+
+
+async def test_xray_scan_accepts_license_via_config_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("PENTESIN_XRAY_TERMS_ACCEPTED", raising=False)
+    config_file = tmp_path / "cli-config.json"
+    config_file.write_text(
+        json.dumps({"env": {"PENTESIN_XRAY_TERMS_ACCEPTED": "true"}}), encoding="utf-8"
+    )
+    from pentesin.config import loader
+
+    monkeypatch.setattr(loader, "_override", config_file)
+    monkeypatch.setattr(loader, "_cached", None)
+
+    session = _FakeSession(report="[]")
+    result = json.loads(await xray._xray_scan_impl(_Ctx(session), IN_SCOPE, plugins=["xss"]))
+    assert result["success"] is True
 
 
 async def test_bypass_probes_are_labelled_and_off_by_default(
