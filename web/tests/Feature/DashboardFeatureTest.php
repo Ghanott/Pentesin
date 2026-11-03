@@ -286,4 +286,42 @@ class DashboardFeatureTest extends TestCase
         $response->assertSee('Laporan PDF');
         $response->assertSee(route('scans.report', $scan));
     }
+
+    public function test_scan_detail_displays_context_mode_and_smart_recon_meta_chips(): void
+    {
+        $user = User::factory()->create();
+        $scan = Scan::create([
+            'user_id' => $user->id,
+            'kind' => 'scan',
+            'target' => 'https://lab.example.com',
+            'mode' => 'deep',
+            'status' => 'running',
+            'context_mode' => true,
+            'smart_recon' => true,
+            'llm_snapshot' => [],
+            'findings' => [],
+        ]);
+
+        $response = $this->actingAs($user)->get(route('scans.show', $scan))->assertOk();
+        $response->assertSee('Mendalam');
+        $response->assertSee('Context Mode');
+        $response->assertSee('Smart Recon');
+
+        $scanPlain = Scan::create([
+            'user_id' => $user->id,
+            'kind' => 'scan',
+            'target' => 'https://lab.example.com',
+            'mode' => 'standard',
+            'status' => 'running',
+            'context_mode' => false,
+            'smart_recon' => false,
+            'llm_snapshot' => [],
+            'findings' => [],
+        ]);
+
+        $responsePlain = $this->actingAs($user)->get(route('scans.show', $scanPlain))->assertOk();
+        $responsePlain->assertSee('Standar');
+        $responsePlain->assertDontSee('Context Mode');
+        $responsePlain->assertDontSee('Smart Recon');
+    }
 }

@@ -15,6 +15,12 @@
                         <span id="scan-status-label">{{ ['queued'=>'Antrean','running'=>'Berjalan','completed'=>'Selesai','stopped'=>'Dihentikan','failed'=>'Gagal','interrupted'=>'Terputus'][$scan->status] ?? $scan->status }}</span>
                     </span>
                     <span class="meta-chip">{{ ['quick'=>'Cepat','standard'=>'Standar','deep'=>'Mendalam'][$scan->mode] ?? ($scan->mode ?? 'model test') }}</span>
+                    @if($scan->context_mode)
+                        <span class="meta-chip">Context Mode</span>
+                    @endif
+                    @if($scan->smart_recon)
+                        <span class="meta-chip">Smart Recon</span>
+                    @endif
                     <span class="meta-time">{{ $scan->created_at->locale('id')->diffForHumans() }}</span>
                 </div>
             </div>

@@ -119,10 +119,92 @@ export function startScanWorkspace(root) {
             }
             return taskBox;
         }
+        if (args.result_summary !== undefined || args.executive_summary !== undefined) {
+            const card = make('div', 'clean-finish-box');
+            const head = make('div', 'clean-finish-head');
+            const isSuccess = args.success !== false;
+            const badgeText = isSuccess ? 'Penyelesaian Tugas (Completed)' : 'Tugas Dihentikan / Gagal';
+            head.append(
+                make('span', `finish-badge ${isSuccess ? 'is-success' : 'is-failed'}`, badgeText)
+            );
+            if (args.report_to_parent !== undefined) {
+                head.append(make('span', 'finish-meta-tag', args.report_to_parent ? 'Lapor ke induk: Ya' : 'Lapor ke induk: Tidak'));
+            }
+            card.append(head);
+
+            const summaryText = args.result_summary ?? args.executive_summary;
+            if (summaryText) {
+                const sec = make('div', 'finish-section');
+                sec.append(make('div', 'finish-sec-title', 'Ringkasan Hasil:'));
+                sec.append(make('div', 'finish-summary-text', String(summaryText)));
+                card.append(sec);
+            }
+
+            if (args.methodology) {
+                const sec = make('div', 'finish-section');
+                sec.append(make('div', 'finish-sec-title', 'Metodologi:'));
+                sec.append(make('div', 'finish-sec-body', String(args.methodology)));
+                card.append(sec);
+            }
+
+            if (args.technical_analysis) {
+                const sec = make('div', 'finish-section');
+                sec.append(make('div', 'finish-sec-title', 'Analisis Teknis:'));
+                sec.append(make('div', 'finish-sec-body', String(args.technical_analysis)));
+                card.append(sec);
+            }
+
+            const findings = Array.isArray(args.findings) ? args.findings.filter(Boolean) : [];
+            if (findings.length > 0) {
+                const sec = make('div', 'finish-section');
+                sec.append(make('div', 'finish-sec-title is-danger', `Temuan Kerentanan (${findings.length}):`));
+                const list = make('ul', 'finish-item-list is-danger');
+                for (const f of findings) {
+                    const li = make('li', 'finish-list-item');
+                    li.textContent = typeof f === 'object' ? JSON.stringify(f) : String(f);
+                    list.append(li);
+                }
+                sec.append(list);
+                card.append(sec);
+            }
+
+            const openItems = Array.isArray(args.open_items) ? args.open_items.filter(Boolean) : [];
+            if (openItems.length > 0) {
+                const sec = make('div', 'finish-section');
+                sec.append(make('div', 'finish-sec-title is-warning', `Item Terbuka / Perlu Tindak Lanjut (${openItems.length}):`));
+                const list = make('ul', 'finish-item-list is-warning');
+                for (const item of openItems) {
+                    const li = make('li', 'finish-list-item');
+                    li.textContent = typeof item === 'object' ? JSON.stringify(item) : String(item);
+                    list.append(li);
+                }
+                sec.append(list);
+                card.append(sec);
+            }
+
+            const recs = Array.isArray(args.final_recommendations)
+                ? args.final_recommendations.filter(Boolean)
+                : (typeof args.recommendations === 'string' && args.recommendations.trim() ? [args.recommendations] : []);
+            if (recs.length > 0) {
+                const sec = make('div', 'finish-section');
+                sec.append(make('div', 'finish-sec-title is-info', 'Rekomendasi:'));
+                const list = make('ul', 'finish-item-list is-info');
+                for (const r of recs) {
+                    const li = make('li', 'finish-list-item');
+                    li.textContent = typeof r === 'object' ? JSON.stringify(r) : String(r);
+                    list.append(li);
+                }
+                sec.append(list);
+                card.append(sec);
+            }
+
+            return card;
+        }
         const grid = make('div', 'clean-params-grid');
         for (const [key, val] of Object.entries(args)) {
             if (val === null || val === undefined) continue;
-            const row = make('div', 'param-row');
+            const isWide = (typeof val === 'string' && val.length > 50) || (Array.isArray(val) && val.length > 1);
+            const row = make('div', `param-row ${isWide ? 'is-wide' : ''}`);
             row.append(make('span', 'param-key', key.replace(/_/g, ' ')));
             let valEl;
             if (Array.isArray(val)) {
@@ -279,7 +361,8 @@ export function startScanWorkspace(root) {
             for (const [k, v] of Object.entries(parsed)) {
                 if (skip.has(k) || v === null || v === undefined) continue;
                 hasKv = true;
-                const row = make('div', 'clean-kv-row');
+                const isWide = (typeof v === 'string' && v.length > 50) || (Array.isArray(v) && v.length > 1);
+                const row = make('div', `clean-kv-row ${isWide ? 'is-wide' : ''}`);
                 row.append(make('span', 'clean-kv-key', k.replace(/_/g, ' ')));
                 let valEl;
                 if (typeof v === 'boolean') {
