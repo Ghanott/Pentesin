@@ -107,6 +107,38 @@ class DashboardFeatureTest extends TestCase
         $this->withToken('test-runner-token')->postJson(route('runner.claim'))->assertOk()->assertJsonPath('job.context_mode', true);
     }
 
+    public function test_smart_recon_migration_preserves_existing_scans_and_is_repeatable(): void
+    {
+        $user = User::factory()->create();
+        $scan = Scan::create(['user_id' => $user->id, 'kind' => 'scan', 'target' => 'https://lab.example', 'mode' => 'standard', 'status' => 'completed', 'llm_snapshot' => [], 'findings' => [['id' => 'preserved']]]);
+        Schema::table('scans', function (Blueprint $table): void {
+            $table->dropColumn('smart_recon');
+        });
+        $migration = require database_path('migrations/2026_11_03_080000_add_smart_recon_to_existing_scans_table.php');
+        $migration->up();
+        $this->assertFalse($scan->fresh()->smart_recon);
+        $this->assertSame([['id' => 'preserved']], $scan->fresh()->findings);
+        $scan->update(['smart_recon' => true]);
+        $migration->up();
+        $this->assertTrue($scan->fresh()->smart_recon);
+    }
+
+    public function test_smart_recon_selection_reaches_runner(): void
+    {
+        config(['pentesin.runner_token' => 'test-runner-token']);
+        $user = User::factory()->create();
+        $profile = LlmProfile::create(['user_id' => $user->id, 'name' => 'Test', 'model' => 'openai/test', 'api_type' => 'chat_completions']);
+        $this->actingAs($user)->post(route('scans.store'), [
+            'target' => 'https://lab.example',
+            'mode' => 'standard',
+            'llm_profile_id' => $profile->id,
+            'smart_recon' => '1',
+        ])->assertSessionHasNoErrors();
+        $scan = Scan::firstOrFail();
+        $this->assertTrue($scan->smart_recon);
+        $this->withToken('test-runner-token')->postJson(route('runner.claim'))->assertOk()->assertJsonPath('job.smart_recon', true);
+    }
+
     public function test_internal_runner_requires_token_and_claims_one_job(): void
     {
         config(['pentesin.runner_token' => 'test-runner-token']);

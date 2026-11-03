@@ -15,6 +15,13 @@ AUTHORIZED TARGETS:
 {% endfor %}
 {% endif %}
 
+{% if system_prompt_context and system_prompt_context.smart_recon %}
+SMART RECON (active this run):
+- Smart Recon is enabled for this scan.
+- When running crawlers, fuzzers, or discovering endpoint lists (e.g. Katana, ffuf, httpx), use triage_recon_data to cluster duplicate parameterized patterns, filter non-exploitable binary media, and prioritize P1 attack vectors (parameters, auth, uploads, APIs).
+- Focus testing on P1 attack vectors first to maximize efficiency while preserving complete coverage.
+{% endif %}
+
 {% if system_prompt_context and system_prompt_context.mcp_available %}
 MCP CONNECTIONS (available this run):
 - The user connected one or more MCP (Model Context Protocol) servers. Their individual tools do NOT appear in your tool list. Use the four discovery and dispatch tools to reach them.

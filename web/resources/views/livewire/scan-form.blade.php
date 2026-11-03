@@ -56,6 +56,17 @@
                 </label>
             </div>
 
+            <div class="option-row">
+                <div class="option-row-text">
+                    <label for="smart-recon">Smart Recon <span class="tag">Eksperimental</span></label>
+                    <p>Optimasi recon: deduplikasi pola URL dan rangkum output scanner untuk menghemat token tanpa melewatkan target.</p>
+                </div>
+                <label class="switch" for="smart-recon" aria-label="Aktifkan Smart Recon">
+                    <input id="smart-recon" type="checkbox" name="smart_recon" value="1" @checked(old('smart_recon'))>
+                    <span class="switch-track"></span>
+                </label>
+            </div>
+
             @if($profiles->isEmpty())
                 <p class="form-warning">Belum ada profil model aktif. Tambahkan <a href="{{ route('settings') }}">profil model</a> sebelum memulai.</p>
             @endif

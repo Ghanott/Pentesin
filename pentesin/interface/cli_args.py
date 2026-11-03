@@ -206,6 +206,17 @@ Examples:
         ),
     )
 
+    parser.add_argument(
+        "--smart-recon",
+        dest="smart_recon",
+        action="store_true",
+        default=False,
+        help=(
+            "Enable smart recon: deduplicate parameterized URLs and summarize crawler/fuzzer "
+            "outputs to conserve agent context window without skipping targets."
+        ),
+    )
+
     # Accepted and ignored: this build has no code targets, so there is no
     # change set to scope a run to. Kept so an existing invocation (and the TUI
     # protocol that carries them) does not break.

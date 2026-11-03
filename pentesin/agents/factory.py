@@ -28,6 +28,7 @@ from pentesin.tools.agents_graph.tools import (
     view_agent_graph,
     wait_for_agents,
 )
+from pentesin.tools.chain import link_exploit_chain, suggest_exploit_chains
 from pentesin.tools.coverage.tools import list_coverage, record_coverage, update_coverage
 from pentesin.tools.finish.tool import finish_scan
 from pentesin.tools.load_skill.tool import load_skill
@@ -55,6 +56,7 @@ from pentesin.tools.proxy.tools import (
     view_request,
     view_sitemap_entry,
 )
+from pentesin.tools.recon import triage_recon_data
 from pentesin.tools.reporting.tool import (
     create_dependency_report,
     create_vulnerability_report,
@@ -645,12 +647,15 @@ _BASE_TOOLS: tuple[Tool, ...] = (
     web_search,
     web_get_contents,
     xray_scan,
+    triage_recon_data,
     create_vulnerability_report,
     create_dependency_report,
     update_vulnerability_report,
     delete_vulnerability_report,
     list_reports,
     get_report,
+    suggest_exploit_chains,
+    link_exploit_chain,
     list_requests,
     view_request,
     repeat_request,

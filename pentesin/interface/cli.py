@@ -92,6 +92,10 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
         "run_name": args.run_name,
         "diff_scope": getattr(args, "diff_scope", {"active": False}),
         "scan_mode": scan_mode,
+        "smart_recon": bool(
+            getattr(args, "smart_recon", False)
+            or os.environ.get("PENTESIN_SMART_RECON") in ("1", "true", "yes")
+        ),
         "non_interactive": bool(getattr(args, "non_interactive", False)),
         "local_sources": getattr(args, "local_sources", None) or [],
         "workspace_files": getattr(args, "workspace_files", None) or [],

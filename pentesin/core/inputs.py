@@ -250,6 +250,7 @@ def build_scope_context(scan_config: dict[str, Any]) -> dict[str, Any]:
     return {
         "scope_source": "user_scan_config",
         "authorized_targets": authorized,
+        "smart_recon": scan_config.get("smart_recon") is True,
     }
 
 

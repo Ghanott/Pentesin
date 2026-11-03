@@ -11,7 +11,7 @@ Exhaustive black-box web and API assessment. Maximum attack-surface discovery, d
 
 - **Subdomain & Host Enumeration**: enumerate subdomains, virtual hosts, and open ports/services across the authorized scope
 - **High-Signal Exposure & Schema Audit**: probe `/.env`, `/.git/HEAD`, `/swagger.json`, `/openapi.json`, `/v3/api-docs`, `/graphql`, `/actuator/*`, `/debug/*`, and extract hidden endpoints/keys from all client `.js` bundles and `*.js.map` files
-- **Deep Content & Parameter Discovery**: run directory/route discovery (`ffuf`, `katana`) and mine hidden query/body/JSON parameters across GET/POST/PUT/PATCH/DELETE
+- **Deep Content & Parameter Discovery**: run directory/route discovery (`ffuf`, `katana`), triage crawler logs with `triage_recon_data`, and mine hidden query/body/JSON parameters across GET/POST/PUT/PATCH/DELETE
 - **Stack & Edge Fingerprinting**: map reverse proxies, CDN/WAF rules, caching layers, auth/session tokens, and role hierarchies
 
 ## Phase 2: Application & State Machine Modeling
@@ -39,6 +39,6 @@ Decompose the target by component and vulnerability class, scaling subagents acr
 
 ## Phase 4: Persistent Evasion & Chaining
 
-- Treat every low/medium primitive (info disclosure, open redirect, HPP, CORS, unauthenticated schema) as a pivot; ask what boundary it unlocks next
-- When initial payloads fail or hit `403`/`406`, pivot representations (JSON <-> form <-> multipart, HPP splitting, alternate API versions `/api/v1` vs `/api/v2`)
-- Validate end-to-end chains with working PoCs, attach proxy `http_exchange_ids`, and reconcile all surfaces in `record_coverage`
+- Treat every low/medium primitive (info disclosure, open redirect, HPP, CORS, unauthenticated schema) as a pivot; invoke `suggest_exploit_chains` to query actionable Target B & C hypothesis candidates.
+- When initial payloads fail or hit `403`/`406`, pivot representations (JSON <-> form <-> multipart, HPP splitting, alternate API versions `/api/v1` vs `/api/v2`).
+- Validate end-to-end chains with working PoCs, combine them using `link_exploit_chain` to upgrade severity to High/Critical, attach proxy `http_exchange_ids`, and reconcile all surfaces in `record_coverage`.

@@ -477,6 +477,7 @@ async def _execute_job(base: str, token: str, job: dict[str, Any]) -> None:
         "user_instructions": job.get("instruction") or "",
         "scan_mode": scan_mode,
         "context_mode": job.get("context_mode") is True,
+        "smart_recon": job.get("smart_recon") is True,
     }
     if job.get("resume") is True:
         state_dir = runtime_state_dir(run_dir_for(scan_id))

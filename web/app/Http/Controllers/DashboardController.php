@@ -250,6 +250,7 @@ class DashboardController extends Controller
             'instruction' => ['nullable', 'string', 'max:10000'],
             'mode' => ['required', Rule::in(['quick', 'standard', 'deep'])],
             'context_mode' => ['sometimes', 'accepted'],
+            'smart_recon' => ['sometimes', 'accepted'],
             'llm_profile_id' => ['required', 'integer', 'exists:llm_profiles,id'],
             'max_budget' => ['nullable', 'numeric', 'min:0.01', 'max:1000'],
         ]);
@@ -257,7 +258,7 @@ class DashboardController extends Controller
         $mode = $data['mode'] === 'quick' ? 'standard' : $data['mode'];
         $scan = Scan::create([
             'user_id' => $request->user()->id, 'target' => $data['target'], 'instruction' => $data['instruction'] ?? '',
-            'mode' => $mode, 'context_mode' => (bool) ($data['context_mode'] ?? false), 'kind' => 'scan', 'status' => 'queued', 'llm_profile_id' => $profile->id,
+            'mode' => $mode, 'context_mode' => (bool) ($data['context_mode'] ?? false), 'smart_recon' => (bool) ($data['smart_recon'] ?? false), 'kind' => 'scan', 'status' => 'queued', 'llm_profile_id' => $profile->id,
             'max_budget' => $data['max_budget'] ?? null, 'llm_snapshot' => $profile->runnerProfile(), 'findings' => [],
         ]);
 

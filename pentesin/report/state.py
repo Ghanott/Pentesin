@@ -91,6 +91,7 @@ UPDATABLE_REPORT_FIELDS = frozenset(
         "http_exchange_ids",
         "fix_verification",
         "fix_pr_body",
+        "chain_metadata",
     }
 )
 

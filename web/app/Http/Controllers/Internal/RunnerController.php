@@ -35,7 +35,7 @@ class RunnerController extends Controller
             $lease = Str::random(64);
             $scan->update(['status' => 'running', 'phase' => 'Menyiapkan runner', 'lease_token' => $lease, 'lease_expires_at' => now()->addSeconds(90), 'started_at' => now()]);
 
-            return response()->json(['job' => $scan->only(['id', 'kind', 'target', 'instruction', 'mode', 'max_budget', 'context_mode']) + ['resume' => $scan->agents()->exists(), 'lease_token' => $lease, 'profile' => $scan->llm_snapshot, 'run_dir' => base_path('../pentesin_runs/web-'.$scan->id)]])->header('Cache-Control', 'no-store');
+            return response()->json(['job' => $scan->only(['id', 'kind', 'target', 'instruction', 'mode', 'max_budget', 'context_mode', 'smart_recon']) + ['resume' => $scan->agents()->exists(), 'lease_token' => $lease, 'profile' => $scan->llm_snapshot, 'run_dir' => base_path('../pentesin_runs/web-'.$scan->id)]])->header('Cache-Control', 'no-store');
         });
     }
 
