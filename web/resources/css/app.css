@@ -1170,6 +1170,12 @@
 .report-btn.is-pdf{color:#53d4c3;border-color:rgba(83,212,195,.35);background:rgba(83,212,195,.06)}
 .report-btn.is-pdf:hover{color:#ffffff;border-color:#53d4c3;background:rgba(83,212,195,.15);box-shadow:0 0 10px rgba(83,212,195,.2)}
 
+.token-usage-badge{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 10px;border-radius:6px;background:rgba(250,178,25,.07);border:1px solid rgba(250,178,25,.28);color:#fbd38d;font-family:var(--mono);font-size:11.5px;line-height:16px;font-weight:600;white-space:nowrap;user-select:none;cursor:default;transition:border-color .12s,background .12s}
+.token-usage-badge svg{flex-shrink:0;color:#f6ad55;opacity:.9}
+.token-usage-badge #scan-tokens-val{color:#ffffff;font-weight:700}
+.token-usage-badge .token-usage-label{color:#fbd38d;font-size:10.5px;font-weight:500;text-transform:uppercase;letter-spacing:.04em;opacity:.85}
+.token-usage-badge:hover{border-color:rgba(250,178,25,.45);background:rgba(250,178,25,.12)}
+
 .test-result-card{border:1px solid var(--border);border-radius:12px;background:var(--surface);padding:20px;margin-top:20px}
 .test-result-card h2{font-size:14px;line-height:20px;font-weight:600;margin:0 0 14px;color:var(--ink)}
 .test-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}

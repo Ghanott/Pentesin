@@ -47,6 +47,18 @@
                     @endif
                 </div>
 
+                @php
+                    $tokens = (int) ($scan->total_tokens ?: ($scan->llm_usage['total_tokens'] ?? 0));
+                    $inTokens = (int) ($scan->llm_usage['input_tokens'] ?? 0);
+                    $outTokens = (int) ($scan->llm_usage['output_tokens'] ?? 0);
+                    $tokenTooltip = 'Total token LLM: ' . number_format($tokens, 0, ',', '.') . ($inTokens || $outTokens ? ' (Input: ' . number_format($inTokens, 0, ',', '.') . ' · Output: ' . number_format($outTokens, 0, ',', '.') . ')' : '');
+                @endphp
+                <div id="scan-tokens-badge" class="token-usage-badge" title="{{ $tokenTooltip }}" @if($tokens === 0 && !in_array($scan->status, ['running', 'completed', 'stopped'])) style="display: none;" @endif>
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+                    <span id="scan-tokens-val">{{ number_format($tokens, 0, ',', '.') }}</span>
+                    <span class="token-usage-label">Token</span>
+                </div>
+
                 @if(in_array($scan->status, ['queued', 'running']))
                     <form method="POST" action="{{ route('scans.stop', $scan) }}" data-confirm="Hentikan pemindaian ini? Sandbox akan dibersihkan sebelum status dihentikan.">
                         @csrf
@@ -99,6 +111,7 @@
                     <dl class="stat-list">
                         <div class="stat-row"><dt>Agent</dt><dd id="agent-count">0</dd></div>
                         <div class="stat-row"><dt>Temuan</dt><dd id="finding-count">0</dd></div>
+                        <div class="stat-row"><dt>Token</dt><dd id="side-token-count">{{ number_format($tokens, 0, ',', '.') }}</dd></div>
                         <div class="stat-row"><dt>Tahap</dt><dd id="scan-phase">{{ $scan->phase ?: 'Menunggu runner' }}</dd></div>
                     </dl>
                 </section>

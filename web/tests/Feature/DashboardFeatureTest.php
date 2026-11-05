@@ -214,7 +214,10 @@ class DashboardFeatureTest extends TestCase
         $this->withToken('test-runner-token')->postJson("/api/internal/runner/v1/scans/{$scan->id}/heartbeat", [
             'lease_token' => 'lease-token', 'agents' => [['id' => 'root', 'parent_id' => null, 'name' => 'Root', 'status' => 'running']],
             'events' => [['source_id' => 'event-1', 'version' => 1, 'agent_id' => 'root', 'type' => 'tool', 'data' => ['tool_name' => 'http_request', 'status' => 'completed', 'result' => ['status_code' => 200], 'api_key' => 'echo-secret']]], 'findings' => [],
+            'llm_usage' => ['requests' => 3, 'input_tokens' => 12000, 'output_tokens' => 3000, 'total_tokens' => 15000],
         ])->assertOk();
+        $this->assertSame(15000, $scan->fresh()->total_tokens);
+        $this->assertSame(15000, $scan->fresh()->llm_usage['total_tokens']);
         $event = $scan->events()->where('version', 1)->firstOrFail();
         $this->assertSame('[redacted]', $event->data['api_key']);
         $this->assertSame(2, $scan->events()->where('source_id', 'event-1')->count());
@@ -224,11 +227,16 @@ class DashboardFeatureTest extends TestCase
         $this->assertDatabaseHas('scan_agents', ['scan_id' => $scan->id, 'agent_id' => 'root']);
         $this->assertDatabaseHas('scan_events', ['scan_id' => $scan->id, 'source_id' => 'event-1']);
         $feed = $this->actingAs($user)->get(route('scans.feed', $scan))->assertOk()->assertJsonPath('agents.0.name', 'Root')->assertJsonPath('scan.artifacts', ['findings.sarif']);
+        $feed->assertJsonPath('scan.total_tokens', 15000);
         $feed->assertJsonPath('cursor', $scan->events()->max('id'));
         $feed->assertJsonPath('events.0.version', 0);
         $this->assertSame('[redacted]', $scan->events()->where('version', 1)->firstOrFail()->data['api_key']);
         $this->assertNotSame('echo-secret', $scan->fresh()->getRawOriginal('llm_snapshot'));
         $this->assertStringNotContainsString('echo-secret', json_encode($event->data));
+
+        $show = $this->actingAs($user)->get(route('scans.show', $scan))->assertOk();
+        $show->assertSee('scan-tokens-badge');
+        $show->assertSee('15.000');
     }
 
     public function test_user_can_view_scan_report_in_id_and_en(): void
@@ -253,12 +261,16 @@ class DashboardFeatureTest extends TestCase
         $resId->assertSee('Laporan Pengujian Penetrasi');
         $resId->assertSee('Critical Remote Code Execution');
         $resId->assertSee('Tingkat Risiko Kritis');
+        $resId->assertSee('Standar Pembobotan & Skala Keparahan Kerentanan (CVSS v3.1)');
+        $resId->assertSee('Kriteria Eksploitasi & Dampak');
 
         // English report
         $resEn = $this->actingAs($user)->get(route('scans.report', [$scan, 'lang' => 'en']))->assertOk();
         $resEn->assertSee('Security Assessment Report');
         $resEn->assertSee('Critical Remote Code Execution');
         $resEn->assertSee('Critical Risk Posture');
+        $resEn->assertSee('Vulnerability Severity Rating Standard (CVSS v3.1)');
+        $resEn->assertSee('Exploitation & Impact Criteria');
 
         // Other user is forbidden (404)
         $otherUser = User::factory()->create();

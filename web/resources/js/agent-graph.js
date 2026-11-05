@@ -690,6 +690,25 @@ export function startScanWorkspace(root) {
             get('scan-error').hidden = !data.scan.error; get('scan-error').textContent = data.scan.error ?? '';
             updateAgents(data.agents ?? []);
             updateArtifacts(data.scan.artifacts ?? []);
+            if (data.scan.total_tokens !== undefined || data.scan.llm_usage) {
+                const totalTokens = Number(data.scan.total_tokens ?? (data.scan.llm_usage?.total_tokens ?? 0));
+                const badge = get('scan-tokens-badge');
+                const valEl = get('scan-tokens-val');
+                const sideEl = get('side-token-count');
+                const formatted = totalTokens.toLocaleString('id-ID');
+                if (valEl) valEl.textContent = formatted;
+                if (sideEl) sideEl.textContent = formatted;
+                if (badge) {
+                    if (totalTokens > 0 || status === 'running') {
+                        badge.style.display = 'inline-flex';
+                    }
+                    const inTok = data.scan.llm_usage?.input_tokens;
+                    const outTok = data.scan.llm_usage?.output_tokens;
+                    if (inTok || outTok) {
+                        badge.title = `Total token LLM: ${formatted} (Input: ${(Number(inTok) || 0).toLocaleString('id-ID')} · Output: ${(Number(outTok) || 0).toLocaleString('id-ID')})`;
+                    }
+                }
+            }
             for (const e of data.events ?? []) {
                 const key = String(e.source_id ?? e.id), current = events.get(key);
                 if (!current || Number(e.version ?? 0) >= Number(current.version ?? 0)) events.set(key, e);

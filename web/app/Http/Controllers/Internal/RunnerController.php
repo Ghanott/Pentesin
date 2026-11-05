@@ -50,7 +50,9 @@ class RunnerController extends Controller
         if (is_array($value)) {
             $clean = [];
             foreach ($value as $key => $item) {
-                $clean[$key] = preg_match('/api[_-]?key|token|secret|password|credential/i', (string) $key) ? '[redacted]' : $this->redact($item, $secret);
+                $isTokenMetric = (bool) preg_match('/_tokens$/i', (string) $key);
+                $isSecret = ! $isTokenMetric && preg_match('/api[_-]?key|token|secret|password|credential/i', (string) $key);
+                $clean[$key] = $isSecret ? '[redacted]' : $this->redact($item, $secret);
             }
 
             return $clean;
@@ -81,6 +83,7 @@ class RunnerController extends Controller
             'lease_token' => ['required', 'string'], 'phase' => ['nullable', 'string', 'max:500'],
             'status' => ['sometimes', Rule::in(['running', 'completed', 'failed', 'stopped', 'interrupted'])],
             'error' => ['nullable', 'string', 'max:2000'], 'test_result' => ['nullable', 'array'], 'artifacts' => ['sometimes', 'array', 'max:10'], 'artifacts.*' => ['string', 'in:penetration_test_report.md,vulnerabilities.json,findings.sarif,coverage.json'],
+            'llm_usage' => ['sometimes', 'nullable', 'array'],
             'agents' => ['sometimes', 'array', 'max:500'], 'agents.*.id' => ['required', 'string', 'max:200'],
             'agents.*.parent_id' => ['nullable', 'string', 'max:200'], 'agents.*.name' => ['required', 'string', 'max:500'], 'agents.*.status' => ['required', 'string', 'max:50'],
             'events' => ['sometimes', 'array', 'max:1000'], 'events.*.source_id' => ['required', 'string', 'max:200'],
@@ -121,10 +124,13 @@ class RunnerController extends Controller
                 $findings->forget($id);
             }
             $changes = ['lease_expires_at' => now()->addSeconds(90), 'findings' => $findings->values()->all()];
-            foreach (['phase', 'error', 'test_result', 'artifacts'] as $key) {
+            foreach (['phase', 'error', 'test_result', 'artifacts', 'llm_usage'] as $key) {
                 if (array_key_exists($key, $data)) {
                     $changes[$key] = $this->redact($data[$key], $secret);
                 }
+            }
+            if (isset($data['llm_usage']['total_tokens']) && is_numeric($data['llm_usage']['total_tokens'])) {
+                $changes['total_tokens'] = (int) $data['llm_usage']['total_tokens'];
             }
             if (isset($data['status'])) {
                 $changes['status'] = $data['status'];

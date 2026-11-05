@@ -23,7 +23,20 @@ class Scan extends Model
 
     protected function casts(): array
     {
-        return ['llm_snapshot' => 'encrypted:array', 'context_mode' => 'boolean', 'smart_recon' => 'boolean', 'findings' => 'array', 'artifacts' => 'array', 'test_result' => 'array', 'lease_expires_at' => 'datetime', 'started_at' => 'datetime', 'finished_at' => 'datetime', 'max_budget' => 'float'];
+        return [
+            'llm_snapshot' => 'encrypted:array',
+            'context_mode' => 'boolean',
+            'smart_recon' => 'boolean',
+            'findings' => 'array',
+            'artifacts' => 'array',
+            'test_result' => 'array',
+            'llm_usage' => 'array',
+            'total_tokens' => 'integer',
+            'lease_expires_at' => 'datetime',
+            'started_at' => 'datetime',
+            'finished_at' => 'datetime',
+            'max_budget' => 'float',
+        ];
     }
 
     public function agents(): HasMany

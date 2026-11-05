@@ -615,6 +615,50 @@
             color: var(--c-ink);
         }
 
+        .methodology-subheading {
+            margin: 24px 0 12px 0;
+        }
+        .methodology-subheading h3 {
+            font-size: 14.5px;
+            font-weight: 700;
+            color: var(--c-ink);
+            letter-spacing: -0.01em;
+            margin-bottom: 6px;
+        }
+        .methodology-subheading p {
+            font-size: 12.5px;
+            line-height: 1.65;
+            color: var(--c-muted);
+            text-align: justify;
+            text-justify: inter-word;
+        }
+
+        .cvss-matrix-table {
+            margin-top: 10px;
+            margin-bottom: 24px;
+        }
+        .cvss-matrix-table td {
+            font-size: 12px;
+            line-height: 1.55;
+            vertical-align: top;
+        }
+        .cvss-score-range {
+            font-family: var(--font-mono);
+            font-weight: 700;
+            font-size: 11.5px;
+            white-space: nowrap;
+        }
+        .cvss-score-range.critical { color: #b91c1c; }
+        .cvss-score-range.high { color: #c2410c; }
+        .cvss-score-range.medium { color: #b45309; }
+        .cvss-score-range.low { color: #1d4ed8; }
+        .cvss-score-range.info { color: #475569; }
+
+        .cvss-eg {
+            color: var(--c-ink);
+            font-weight: 500;
+        }
+
         /* Summary Table */
         .report-table {
             width: 100%;
@@ -1079,7 +1123,7 @@
                 break-inside: auto;
             }
 
-            .finding-detail-card {
+            .finding-detail-card, .cvss-matrix-table {
                 page-break-inside: avoid;
                 break-inside: avoid;
                 margin-bottom: 24pt;
@@ -1278,6 +1322,102 @@
                         {{ $isEn ? 'Safe, non-destructive execution of reproduction steps to eliminate false positives and validate real-world exploitability.' : 'Eksekusi pembuktian konsep (PoC) secara non-destruktif untuk mengeliminasi false positive dan memvalidasi potensi dampak nyata.' }}
                     </li>
                 </ul>
+
+                <div class="methodology-subheading">
+                    <h3>{{ $isEn ? 'Vulnerability Severity Rating Standard (CVSS v3.1)' : 'Standar Pembobotan & Skala Keparahan Kerentanan (CVSS v3.1)' }}</h3>
+                    <p>
+                        {{ $isEn
+                            ? 'Vulnerability severity is quantified using the Common Vulnerability Scoring System (CVSS v3.1) qualitative severity rating scale maintained by FIRST.org. The base metric score (0.0 to 10.0) models intrinsic exploitability (Attack Vector, Complexity, Privileges Required, User Interaction) mapped against operational impact across Confidentiality, Integrity, and Availability (CIA Triad).'
+                            : 'Tingkat keparahan temuan diukur mengacu pada skala kualitatif Common Vulnerability Scoring System (CVSS v3.1) yang diterbitkan secara resmi oleh FIRST.org. Skor dasar (0.0 hingga 10.0) mengevaluasi kemudahan eksploitasi (Attack Vector, Attack Complexity, Privileges Required, User Interaction) yang dikalkulasikan terhadap dampak kerusakan pada aspek Kerahasiaan (Confidentiality), Keutuhan Data (Integrity), dan Ketersediaan Layanan (Availability).'
+                        }}
+                    </p>
+                </div>
+
+                <table class="report-table cvss-matrix-table">
+                    <thead>
+                        <tr>
+                            <th style="width: 16%;">{{ $isEn ? 'Severity' : 'Tingkat' }}</th>
+                            <th style="width: 14%;">{{ $isEn ? 'Score Range' : 'Rentang Skor' }}</th>
+                            <th style="width: 42%;">{{ $isEn ? 'Exploitation & Impact Criteria' : 'Kriteria Eksploitasi & Dampak' }}</th>
+                            <th style="width: 28%;">{{ $isEn ? 'Typical Examples' : 'Contoh Kerentanan' }}</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><span class="sev-badge critical">{{ $severityNames['critical'] }}</span></td>
+                            <td class="cvss-score-range critical">9.0 – 10.0</td>
+                            <td>
+                                {{ $isEn
+                                    ? 'Remotely exploitable without credentials or user interaction. Can cause complete system takeover, remote code execution (RCE), or unrestricted data compromise.'
+                                    : 'Dapat dieksploitasi jarak jauh (Network) tanpa otentikasi maupun interaksi korban. Mengakibatkan pengambilalihan kontrol sistem penuh, eksekusi kode arbitrer (RCE), atau kebocoran data menyeluruh.'
+                                }}
+                            </td>
+                            <td>
+                                <span class="cvss-eg">Remote Code Execution (RCE)</span>,
+                                <span class="cvss-eg">SQLi Unauthenticated</span>,
+                                <span class="cvss-eg">Admin Auth Bypass</span>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td><span class="sev-badge high">{{ $severityNames['high'] }}</span></td>
+                            <td class="cvss-score-range high">7.0 – 8.9</td>
+                            <td>
+                                {{ $isEn
+                                    ? 'Significant unauthorized access, privilege escalation, or sensitive data breach. Often requires standard user authentication or minor preconditions.'
+                                    : 'Akses tidak sah signifikan, eskalasi hak istimewa, atau kebocoran data sensitif volume besar. Umumnya memerlukan hak akses pengguna biasa atau prasyarat tertentu.'
+                                }}
+                            </td>
+                            <td>
+                                <span class="cvss-eg">IDOR Akun Sensitif</span>,
+                                <span class="cvss-eg">Stored XSS Admin Area</span>,
+                                <span class="cvss-eg">Mass Assignment Privilege Escalation</span>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td><span class="sev-badge medium">{{ $severityNames['medium'] }}</span></td>
+                            <td class="cvss-score-range medium">4.0 – 6.9</td>
+                            <td>
+                                {{ $isEn
+                                    ? 'Conditional exploitation requiring social engineering, user interaction, or resulting in partial data/service disruption.'
+                                    : 'Eksploitasi bersyarat yang memerlukan interaksi aktif korban (social engineering) atau berdampak kerusakan parsial pada sebagian data/fungsi aplikasi.'
+                                }}
+                            </td>
+                            <td>
+                                <span class="cvss-eg">Reflected XSS</span>,
+                                <span class="cvss-eg">Cross-Site Request Forgery (CSRF)</span>,
+                                <span class="cvss-eg">Open Redirect Berantai</span>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td><span class="sev-badge low">{{ $severityNames['low'] }}</span></td>
+                            <td class="cvss-score-range low">0.1 – 3.9</td>
+                            <td>
+                                {{ $isEn
+                                    ? 'Minimal impact or high technical complexity. Typically requires elevated local access or discloses non-sensitive operational details.'
+                                    : 'Dampak kerusakan minimal atau memerlukan hak akses tinggi terlebih dahulu. Tidak dapat digunakan secara langsung untuk mengambil alih sistem.'
+                                }}
+                            </td>
+                            <td>
+                                <span class="cvss-eg">Information Disclosure Versi Server</span>,
+                                <span class="cvss-eg">Missing Security Headers (HSTS, CSP)</span>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td><span class="sev-badge info">{{ $severityNames['info'] }}</span></td>
+                            <td class="cvss-score-range info">0.0</td>
+                            <td>
+                                {{ $isEn
+                                    ? 'No direct security risk. Configuration observations, security architecture deviations, or defensive hardening best practices.'
+                                    : 'Tidak memiliki dampak eksploitasi langsung. Berupa catatan konfigurasi, analisis arsitektur, atau rekomendasi penguatan pertahanan (hardening).'
+                                }}
+                            </td>
+                            <td>
+                                <span class="cvss-eg">Banner Grabbing</span>,
+                                <span class="cvss-eg">Exposed robots.txt / Public API Docs</span>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
             </section>
 
             <!-- 4. VULNERABILITY SUMMARY TABLE -->

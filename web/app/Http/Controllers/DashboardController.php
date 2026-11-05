@@ -282,7 +282,7 @@ class DashboardController extends Controller
         $events = $scan->events()->where('id', '>', $after)->orderBy('id')->limit(200)->get(['id', 'source_id', 'version', 'agent_id', 'type', 'data', 'created_at']);
 
         return response()->json([
-            'scan' => $scan->only(['id', 'target', 'instruction', 'status', 'phase', 'error', 'test_result', 'started_at', 'finished_at', 'artifacts']) + ['artifacts' => array_intersect($scan->artifacts ?? [], ['penetration_test_report.md', 'vulnerabilities.json', 'findings.sarif', 'coverage.json'])],
+            'scan' => $scan->only(['id', 'target', 'instruction', 'status', 'phase', 'error', 'test_result', 'started_at', 'finished_at', 'artifacts', 'total_tokens', 'llm_usage']) + ['artifacts' => array_intersect($scan->artifacts ?? [], ['penetration_test_report.md', 'vulnerabilities.json', 'findings.sarif', 'coverage.json'])],
             'agents' => $scan->agents()->orderBy('id')->get()->map(fn ($agent) => ['id' => $agent->agent_id, 'parent_id' => $agent->parent_id, 'name' => $agent->name, 'status' => $agent->status, 'created_at' => $agent->created_at]),
             'events' => $events,
             'cursor' => $events->last()?->id ?? $after,

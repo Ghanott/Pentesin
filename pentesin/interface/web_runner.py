@@ -339,6 +339,10 @@ async def _supervise_scan(  # noqa: PLR0915
                 if isinstance(item, dict)
             ][:1000],
         }
+        if hasattr(report, "get_total_llm_usage"):
+            llm_usage = report.get_total_llm_usage()
+            if isinstance(llm_usage, dict) and llm_usage:
+                payload["llm_usage"] = llm_usage
         if status:
             payload["status"] = status
         pending = _save_completion(base, job, payload) if status else None
