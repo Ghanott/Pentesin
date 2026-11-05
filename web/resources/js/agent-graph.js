@@ -677,6 +677,22 @@ export function startScanWorkspace(root) {
             event.preventDefault(); sendMessage();
         }
     });
+    const tokenBadge = get('scan-tokens-badge');
+    if (tokenBadge) {
+        tokenBadge.addEventListener('click', () => {
+            const val = get('scan-tokens-val')?.textContent || '0';
+            const inVal = get('scan-tokens-in')?.textContent || '0';
+            const outVal = get('scan-tokens-out')?.textContent || '0';
+            const textToCopy = `Total Token: ${val} (In: ${inVal} · Out: ${outVal})`;
+            if (navigator?.clipboard?.writeText) {
+                navigator.clipboard.writeText(textToCopy).then(() => {
+                    const toast = make('div', 'token-copy-hint', '✓ Rincian token disalin');
+                    document.body.append(toast);
+                    setTimeout(() => toast.remove(), 2000);
+                }).catch(() => {});
+            }
+        });
+    }
     async function poll() {
         if (stopped) return;
         if (document.hidden) { setTimeout(poll, 5000); return; }
@@ -692,21 +708,24 @@ export function startScanWorkspace(root) {
             updateArtifacts(data.scan.artifacts ?? []);
             if (data.scan.total_tokens !== undefined || data.scan.llm_usage) {
                 const totalTokens = Number(data.scan.total_tokens ?? (data.scan.llm_usage?.total_tokens ?? 0));
+                const inTokens = Number(data.scan.llm_usage?.input_tokens ?? 0);
+                const outTokens = Number(data.scan.llm_usage?.output_tokens ?? 0);
                 const badge = get('scan-tokens-badge');
                 const valEl = get('scan-tokens-val');
+                const inEl = get('scan-tokens-in');
+                const outEl = get('scan-tokens-out');
                 const sideEl = get('side-token-count');
                 const formatted = totalTokens.toLocaleString('id-ID');
                 if (valEl) valEl.textContent = formatted;
+                if (inEl) inEl.textContent = inTokens.toLocaleString('id-ID');
+                if (outEl) outEl.textContent = outTokens.toLocaleString('id-ID');
                 if (sideEl) sideEl.textContent = formatted;
                 if (badge) {
                     if (totalTokens > 0 || status === 'running') {
                         badge.style.display = 'inline-flex';
                     }
-                    const inTok = data.scan.llm_usage?.input_tokens;
-                    const outTok = data.scan.llm_usage?.output_tokens;
-                    if (inTok || outTok) {
-                        badge.title = `Total token LLM: ${formatted} (Input: ${(Number(inTok) || 0).toLocaleString('id-ID')} · Output: ${(Number(outTok) || 0).toLocaleString('id-ID')})`;
-                    }
+                    badge.classList.toggle('is-running', status === 'running');
+                    badge.title = `Total token: ${formatted} (Input: ${inTokens.toLocaleString('id-ID')} · Output: ${outTokens.toLocaleString('id-ID')}) — Klik untuk menyalin`;
                 }
             }
             for (const e of data.events ?? []) {

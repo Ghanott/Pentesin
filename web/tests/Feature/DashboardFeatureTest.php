@@ -237,6 +237,19 @@ class DashboardFeatureTest extends TestCase
         $show = $this->actingAs($user)->get(route('scans.show', $scan))->assertOk();
         $show->assertSee('scan-tokens-badge');
         $show->assertSee('15.000');
+        $show->assertSee('scan-tokens-in');
+        $show->assertSee('scan-tokens-out');
+        $show->assertSee('12.000');
+        $show->assertSee('3.000');
+        $show->assertSee('Klik untuk menyalin');
+        $show->assertSee('actions-sub-row');
+        $show->assertSee('actions-main-row');
+        $show->assertSee('report-btn is-pdf', false);
+        $this->assertGreaterThan(
+            strpos($show->getContent(), 'Laporan PDF'),
+            strpos($show->getContent(), 'actions-sub-row'),
+            'Token breakdown row should render after the PDF report button.'
+        );
     }
 
     public function test_user_can_view_scan_report_in_id_and_en(): void

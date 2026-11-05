@@ -26,24 +26,33 @@
             </div>
 
             <div class="detail-head-actions">
-                <div id="scan-artifacts" class="report-row" aria-label="Laporan pemindaian">
-                    @foreach($artifacts as $artifact)
-                        <a class="report-btn" href="{{ route('scans.artifacts', [$scan, $artifact]) }}">
-                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
-                            <span>{{ $artifact }}</span>
-                        </a>
-                        @if($artifact === 'vulnerabilities.json')
+                <div class="actions-main-row">
+                    <div id="scan-artifacts" class="report-row" aria-label="Laporan pemindaian">
+                        @foreach($artifacts as $artifact)
+                            <a class="report-btn" href="{{ route('scans.artifacts', [$scan, $artifact]) }}">
+                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                                <span>{{ $artifact }}</span>
+                            </a>
+                            @if($artifact === 'vulnerabilities.json')
+                                <a class="report-btn is-pdf" href="{{ route('scans.report', $scan) }}" target="_blank" rel="noopener" title="Lihat dan cetak Laporan PDF (Standar HackerOne / PTES)">
+                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 6 2 18 2 18 9"></polyline><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path><rect x="6" y="14" width="12" height="8"></rect></svg>
+                                    <span>Laporan PDF</span>
+                                </a>
+                            @endif
+                        @endforeach
+                        @if(!in_array('vulnerabilities.json', $artifacts) && (count($scan->findings ?? []) > 0 || in_array($scan->status, ['completed', 'stopped'])))
                             <a class="report-btn is-pdf" href="{{ route('scans.report', $scan) }}" target="_blank" rel="noopener" title="Lihat dan cetak Laporan PDF (Standar HackerOne / PTES)">
                                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 6 2 18 2 18 9"></polyline><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path><rect x="6" y="14" width="12" height="8"></rect></svg>
                                 <span>Laporan PDF</span>
                             </a>
                         @endif
-                    @endforeach
-                    @if(!in_array('vulnerabilities.json', $artifacts) && (count($scan->findings ?? []) > 0 || in_array($scan->status, ['completed', 'stopped'])))
-                        <a class="report-btn is-pdf" href="{{ route('scans.report', $scan) }}" target="_blank" rel="noopener" title="Lihat dan cetak Laporan PDF (Standar HackerOne / PTES)">
-                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 6 2 18 2 18 9"></polyline><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path><rect x="6" y="14" width="12" height="8"></rect></svg>
-                            <span>Laporan PDF</span>
-                        </a>
+                    </div>
+
+                    @if(in_array($scan->status, ['queued', 'running']))
+                        <form method="POST" action="{{ route('scans.stop', $scan) }}" data-confirm="Hentikan pemindaian ini? Sandbox akan dibersihkan sebelum status dihentikan.">
+                            @csrf
+                            <button type="submit" class="btn-row is-danger">Hentikan pemindaian</button>
+                        </form>
                     @endif
                 </div>
 
@@ -53,18 +62,27 @@
                     $outTokens = (int) ($scan->llm_usage['output_tokens'] ?? 0);
                     $tokenTooltip = 'Total token LLM: ' . number_format($tokens, 0, ',', '.') . ($inTokens || $outTokens ? ' (Input: ' . number_format($inTokens, 0, ',', '.') . ' · Output: ' . number_format($outTokens, 0, ',', '.') . ')' : '');
                 @endphp
-                <div id="scan-tokens-badge" class="token-usage-badge" title="{{ $tokenTooltip }}" @if($tokens === 0 && !in_array($scan->status, ['running', 'completed', 'stopped'])) style="display: none;" @endif>
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
-                    <span id="scan-tokens-val">{{ number_format($tokens, 0, ',', '.') }}</span>
-                    <span class="token-usage-label">Token</span>
+                <div class="actions-sub-row" aria-label="Ringkasan penggunaan token AI">
+                    <div id="scan-tokens-badge" class="token-usage-badge" role="status" aria-label="Penggunaan token LLM — klik untuk menyalin rincian" title="{{ $tokenTooltip }} — Klik untuk menyalin" @if($tokens === 0 && !in_array($scan->status, ['running', 'completed', 'stopped'])) style="display: none;" @endif>
+                        <span class="token-main">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+                            <span id="scan-tokens-val">{{ number_format($tokens, 0, ',', '.') }}</span>
+                            <span class="token-usage-label">Token</span>
+                        </span>
+                        <span class="token-divider" aria-hidden="true"></span>
+                        <span class="token-breakdown">
+                            <span class="token-io" title="Input tokens (prompt & context)">
+                                <span class="io-label">In</span>
+                                <span id="scan-tokens-in" class="io-val">{{ number_format($inTokens, 0, ',', '.') }}</span>
+                            </span>
+                            <span class="io-sep" aria-hidden="true">·</span>
+                            <span class="token-io" title="Output tokens (generasi & tool calls)">
+                                <span class="io-label">Out</span>
+                                <span id="scan-tokens-out" class="io-val">{{ number_format($outTokens, 0, ',', '.') }}</span>
+                            </span>
+                        </span>
+                    </div>
                 </div>
-
-                @if(in_array($scan->status, ['queued', 'running']))
-                    <form method="POST" action="{{ route('scans.stop', $scan) }}" data-confirm="Hentikan pemindaian ini? Sandbox akan dibersihkan sebelum status dihentikan.">
-                        @csrf
-                        <button type="submit" class="btn-row is-danger">Hentikan pemindaian</button>
-                    </form>
-                @endif
             </div>
         </header>
 
