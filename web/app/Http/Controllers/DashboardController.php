@@ -168,63 +168,115 @@ class DashboardController extends Controller
             ];
         }
 
-        $prompt = "You are a Principal Penetration Tester and Lead Security Auditor. Paraphrase and synthesize publication-grade vulnerability reports for an international cybersecurity audit.\n";
-        $prompt .= "Target findings input (JSON):\n".json_encode($payloadFindings, JSON_UNESCAPED_SLASHES)."\n\n";
-        $prompt .= "REQUIREMENTS:\n";
-        $prompt .= "1. For EACH finding, produce both an English (HackerOne VRT standard) and an Indonesian (BSSN / ISO 27001 standard) version.\n";
-        $prompt .= "2. The English version ('en') must be 100% natural, fluent, professional English (no Indonesian words).\n";
-        $prompt .= "3. The Indonesian version ('id') must be 100% formal, authoritative Indonesian cybersecurity terminology.\n";
-        $prompt .= "4. Provide high-quality 'title', 'description', 'impact', 'technical_analysis', and 'remediation' for both languages.\n";
-        $prompt .= "5. Return ONLY a valid JSON object matching this schema, no markdown wrapping, no explanation:\n";
-        $prompt .= "{\n  \"findings\": [\n    {\n      \"finding_id\": \"string\",\n      \"en\": {\n        \"title\": \"...\",\n        \"description\": \"...\",\n        \"impact\": \"...\",\n        \"technical_analysis\": \"...\",\n        \"remediation\": \"...\"\n      },\n      \"id\": {\n        \"title\": \"...\",\n        \"description\": \"...\",\n        \"impact\": \"...\",\n        \"technical_analysis\": \"...\",\n        \"remediation\": \"...\"\n      }\n    }\n  ]\n}";
-
         $caBundle = base_path('../.venv/Lib/site-packages/certifi/cacert.pem');
         $client = Http::timeout(120)->acceptJson()->withOptions(['verify' => is_file($caBundle) ? $caBundle : false]);
         if (filled($snapshot['api_key'] ?? null)) {
             $client = $client->withToken($snapshot['api_key']);
         }
 
-        try {
-            $res = $client->post($endpoint, [
-                'model' => $model,
-                'messages' => [
-                    ['role' => 'system', 'content' => 'You are an expert security report synthesizer. Output strictly valid JSON without code fences or surrounding commentary.'],
-                    ['role' => 'user', 'content' => $prompt],
-                ],
-                'temperature' => 0.2,
-                'max_tokens' => 4000,
-            ]);
+        $languageNarratives = [];
+        $expectedIds = array_column($payloadFindings, 'id');
+        foreach (['en', 'id'] as $language) {
+            $languageName = $language === 'en' ? 'English' : 'Indonesian';
+            $languageRequirement = $language === 'en'
+                ? 'Write only in fluent professional English, following HackerOne VRT terminology.'
+                : 'Tulis hanya dalam Bahasa Indonesia formal dengan terminologi keamanan siber yang tepat, sesuai standar BSSN / ISO 27001.';
+            $prompt = "You are a Principal Penetration Tester and Lead Security Auditor. Rewrite publication-grade vulnerability report narratives for an international cybersecurity audit.\n";
+            $prompt .= "Produce this request's output only in {$languageName}. {$languageRequirement}\n";
+            $prompt .= "For EACH input finding, preserve the finding ID and provide high-quality title, description, impact, technical_analysis, and remediation. Do not invent facts or change severity.\n";
+            $prompt .= "Target findings input (JSON):\n".json_encode($payloadFindings, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)."\n\n";
+            $prompt .= "Return ONLY valid JSON, no markdown or explanation, using this schema and this language key only:\n";
+            $prompt .= json_encode([
+                'findings' => [[
+                    'finding_id' => 'string',
+                    $language => [
+                        'title' => '...',
+                        'description' => '...',
+                        'impact' => '...',
+                        'technical_analysis' => '...',
+                        'remediation' => '...',
+                    ],
+                ]],
+            ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
 
-            if (! $res->successful()) {
-                $err = data_get($res->json(), 'error.message') ?: ('HTTP '.$res->status());
+            try {
+                $res = $client->post($endpoint, [
+                    'model' => $model,
+                    'messages' => [
+                        ['role' => 'system', 'content' => 'You are an expert security report synthesizer. Output strictly valid JSON without code fences or surrounding commentary.'],
+                        ['role' => 'user', 'content' => $prompt],
+                    ],
+                    'temperature' => 0.2,
+                    'max_tokens' => 4000,
+                ]);
 
-                return response()->json(['success' => false, 'error' => 'Gagal menghubungi LLM: '.$err], 502);
+                if (! $res->successful()) {
+                    $err = data_get($res->json(), 'error.message') ?: ('HTTP '.$res->status());
+
+                    return response()->json(['success' => false, 'error' => "Gagal membuat narasi {$languageName}: ".$err], 502);
+                }
+
+                $rawContent = data_get($res->json(), 'choices.0.message.content') ?? '';
+                $trimmed = trim((string) $rawContent);
+                if (str_starts_with($trimmed, '```')) {
+                    $trimmed = preg_replace('/^```(?:json)?\s*/i', '', $trimmed);
+                    $trimmed = preg_replace('/\s*```$/', '', $trimmed);
+                }
+
+                $parsed = json_decode($trimmed, true);
+                if (! is_array($parsed) || ! is_array($parsed['findings'] ?? null)) {
+                    return response()->json(['success' => false, 'error' => "Format respons {$languageName} tidak valid sebagai JSON temuan."], 502);
+                }
+
+                $byFindingId = [];
+                foreach ($parsed['findings'] as $translatedFinding) {
+                    if (! is_array($translatedFinding)) {
+                        return response()->json(['success' => false, 'error' => "Format temuan {$languageName} tidak valid."], 502);
+                    }
+                    $findingId = $translatedFinding['finding_id'] ?? $translatedFinding['id'] ?? null;
+                    $narrative = $translatedFinding[$language] ?? null;
+                    if (! is_string($findingId) || ! in_array($findingId, $expectedIds, true) || isset($byFindingId[$findingId]) || ! is_array($narrative)) {
+                        return response()->json(['success' => false, 'error' => "Respons {$languageName} tidak cocok dengan daftar temuan."], 502);
+                    }
+                    foreach (['title', 'description', 'impact', 'technical_analysis', 'remediation'] as $field) {
+                        if (! is_string($narrative[$field] ?? null) || trim($narrative[$field]) === '') {
+                            return response()->json(['success' => false, 'error' => "Respons {$languageName} tidak lengkap untuk temuan {$findingId}."], 502);
+                        }
+                    }
+                    $byFindingId[$findingId] = $narrative;
+                }
+
+                if (count($byFindingId) !== count($expectedIds)) {
+                    return response()->json(['success' => false, 'error' => "Respons {$languageName} tidak mencakup seluruh temuan."], 502);
+                }
+                $languageNarratives[$language] = $byFindingId;
+            } catch (\Throwable $e) {
+                return response()->json(['success' => false, 'error' => "Kesalahan saat sintesis {$languageName}: ".$e->getMessage()], 500);
             }
-
-            $rawContent = data_get($res->json(), 'choices.0.message.content') ?? '';
-            $trimmed = trim((string) $rawContent);
-            if (str_starts_with($trimmed, '```')) {
-                $trimmed = preg_replace('/^```(?:json)?\s*/i', '', $trimmed);
-                $trimmed = preg_replace('/\s*```$/', '', $trimmed);
-            }
-
-            $parsed = json_decode($trimmed, true);
-            if (! is_array($parsed) || empty($parsed['findings'])) {
-                return response()->json(['success' => false, 'error' => 'Format respons LLM tidak valid sebagai JSON temuan.'], 502);
-            }
-
-            $narrativesPath = "pentesin_runs/web-{$scan->id}/report_narratives.json";
-            Storage::disk('local')->put($narrativesPath, json_encode($parsed, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
-
-            $artifacts = $scan->artifacts ?? [];
-            if (! in_array('report_narratives.json', $artifacts, true)) {
-                $scan->update(['artifacts' => array_values(array_unique([...$artifacts, 'report_narratives.json']))]);
-            }
-
-            return response()->json(['success' => true, 'count' => count($parsed['findings'])]);
-        } catch (\Throwable $e) {
-            return response()->json(['success' => false, 'error' => 'Kesalahan sistem saat sintesis: '.$e->getMessage()], 500);
         }
+
+        $merged = ['findings' => []];
+        foreach ($payloadFindings as $finding) {
+            $findingId = $finding['id'];
+            $merged['findings'][] = [
+                'finding_id' => $findingId,
+                'en' => $languageNarratives['en'][$findingId],
+                'id' => $languageNarratives['id'][$findingId],
+            ];
+        }
+
+        $narrativesPath = "pentesin_runs/web-{$scan->id}/report_narratives.json";
+        $saved = Storage::disk('local')->put($narrativesPath, json_encode($merged, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+        if (! $saved) {
+            return response()->json(['success' => false, 'error' => 'Gagal menyimpan hasil parafrase.'], 500);
+        }
+
+        $artifacts = $scan->artifacts ?? [];
+        if (! in_array('report_narratives.json', $artifacts, true)) {
+            $scan->update(['artifacts' => array_values(array_unique([...$artifacts, 'report_narratives.json']))]);
+        }
+
+        return response()->json(['success' => true, 'count' => count($merged['findings'])]);
     }
 
     public function store(Request $request): RedirectResponse

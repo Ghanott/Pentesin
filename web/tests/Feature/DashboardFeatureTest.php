@@ -9,6 +9,7 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
 class DashboardFeatureTest extends TestCase
@@ -250,6 +251,109 @@ class DashboardFeatureTest extends TestCase
             strpos($show->getContent(), 'actions-sub-row'),
             'Token breakdown row should render after the PDF report button.'
         );
+    }
+
+    public function test_report_synthesis_uses_two_language_requests_and_persists_only_after_both_succeed(): void
+    {
+        Storage::fake('local');
+        $user = User::factory()->create();
+        $profile = LlmProfile::create([
+            'user_id' => $user->id,
+            'name' => 'Report writer',
+            'model' => 'openai/report-model',
+            'api_base' => 'https://llm.example/v1',
+            'api_type' => 'chat_completions',
+            'api_key' => 'report-secret',
+        ]);
+        $scan = Scan::create([
+            'user_id' => $user->id,
+            'kind' => 'scan',
+            'target' => 'https://lab.example',
+            'mode' => 'standard',
+            'status' => 'completed',
+            'llm_profile_id' => $profile->id,
+            'llm_snapshot' => $profile->runnerProfile(),
+            'artifacts' => [],
+            'findings' => [[
+                'id' => 'finding-1',
+                'title' => 'Original title',
+                'severity' => 'high',
+                'description' => 'Original description',
+            ]],
+        ]);
+        $path = "pentesin_runs/web-{$scan->id}/report_narratives.json";
+        $englishResponse = ['findings' => [[
+            'finding_id' => 'finding-1',
+            'en' => ['title' => 'English title', 'description' => 'English description', 'impact' => 'English impact', 'technical_analysis' => 'English analysis', 'remediation' => 'English remediation'],
+        ]]];
+        $indonesianResponse = ['findings' => [[
+            'finding_id' => 'finding-1',
+            'id' => ['title' => 'Judul Indonesia', 'description' => 'Deskripsi Indonesia', 'impact' => 'Dampak Indonesia', 'technical_analysis' => 'Analisis Indonesia', 'remediation' => 'Remediasi Indonesia'],
+        ]]];
+
+        Http::fakeSequence()
+            ->push(['choices' => [['message' => ['content' => json_encode($englishResponse)]]]], 200)
+            ->push(['choices' => [['message' => ['content' => json_encode($indonesianResponse)]]]], 200);
+
+        $this->actingAs($user)
+            ->postJson(route('scans.report.synthesize', $scan))
+            ->assertOk()
+            ->assertJson(['success' => true, 'count' => 1]);
+
+        Http::assertSentCount(2);
+        Http::assertSent(fn ($request): bool => str_contains($request['messages'][1]['content'], 'English')
+            && ! str_contains($request['messages'][1]['content'], 'Indonesian'));
+        Http::assertSent(fn ($request): bool => str_contains($request['messages'][1]['content'], 'Indonesian')
+            && ! str_contains($request['messages'][1]['content'], 'English'));
+
+        $stored = json_decode(Storage::disk('local')->get($path), true);
+        $this->assertSame('English title', $stored['findings'][0]['en']['title']);
+        $this->assertSame('Judul Indonesia', $stored['findings'][0]['id']['title']);
+        $this->assertContains('report_narratives.json', $scan->fresh()->artifacts);
+    }
+
+    public function test_report_synthesis_keeps_previous_file_when_second_language_request_fails(): void
+    {
+        Storage::fake('local');
+        $user = User::factory()->create();
+        $profile = LlmProfile::create([
+            'user_id' => $user->id,
+            'name' => 'Report writer',
+            'model' => 'openai/report-model',
+            'api_base' => 'https://llm.example/v1',
+            'api_type' => 'chat_completions',
+            'api_key' => 'report-secret',
+        ]);
+        $scan = Scan::create([
+            'user_id' => $user->id,
+            'kind' => 'scan',
+            'target' => 'https://lab.example',
+            'mode' => 'standard',
+            'status' => 'completed',
+            'llm_profile_id' => $profile->id,
+            'llm_snapshot' => $profile->runnerProfile(),
+            'artifacts' => ['report_narratives.json'],
+            'findings' => [['id' => 'finding-1', 'title' => 'Original title', 'severity' => 'high']],
+        ]);
+        $path = "pentesin_runs/web-{$scan->id}/report_narratives.json";
+        $previous = ['findings' => [['finding_id' => 'finding-1', 'en' => ['title' => 'Previous English'], 'id' => ['title' => 'Judul Sebelumnya']]]];
+        Storage::disk('local')->put($path, json_encode($previous));
+        $englishResponse = ['findings' => [[
+            'finding_id' => 'finding-1',
+            'en' => ['title' => 'New English', 'description' => 'English description', 'impact' => 'English impact', 'technical_analysis' => 'English analysis', 'remediation' => 'English remediation'],
+        ]]];
+        Http::fakeSequence()
+            ->push(['choices' => [['message' => ['content' => json_encode($englishResponse)]]]], 200)
+            ->push(['error' => ['message' => 'Indonesian synthesis failed']], 502);
+
+        $this->actingAs($user)
+            ->postJson(route('scans.report.synthesize', $scan))
+            ->assertStatus(502)
+            ->assertJsonPath('success', false);
+
+        Http::assertSentCount(2);
+        $this->assertSame($previous, json_decode(Storage::disk('local')->get($path), true));
+        $this->assertSame(['report_narratives.json'], $scan->fresh()->artifacts);
     }
 
     public function test_user_can_view_scan_report_in_id_and_en(): void
