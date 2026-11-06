@@ -210,7 +210,7 @@ class DashboardController extends Controller
                             ['role' => 'user', 'content' => $prompt],
                         ],
                         'temperature' => 0.2,
-                        'max_tokens' => 4000,
+                        'max_tokens' => 8192,
                     ]);
 
                     if (! $res->successful()) {
