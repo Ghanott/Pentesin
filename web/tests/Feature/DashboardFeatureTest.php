@@ -253,7 +253,7 @@ class DashboardFeatureTest extends TestCase
         );
     }
 
-    public function test_report_synthesis_uses_two_language_requests_and_persists_only_after_both_succeed(): void
+    public function test_report_synthesis_batches_three_findings_per_language_and_persists_only_after_all_requests_succeed(): void
     {
         Storage::fake('local');
         $user = User::factory()->create();
@@ -265,6 +265,12 @@ class DashboardFeatureTest extends TestCase
             'api_type' => 'chat_completions',
             'api_key' => 'report-secret',
         ]);
+        $findings = array_map(fn (int $id): array => [
+            'id' => "finding-{$id}",
+            'title' => "Original title {$id}",
+            'severity' => 'high',
+            'description' => "Original description {$id}",
+        ], range(1, 4));
         $scan = Scan::create([
             'user_id' => $user->id,
             'kind' => 'scan',
@@ -274,41 +280,58 @@ class DashboardFeatureTest extends TestCase
             'llm_profile_id' => $profile->id,
             'llm_snapshot' => $profile->runnerProfile(),
             'artifacts' => [],
-            'findings' => [[
-                'id' => 'finding-1',
-                'title' => 'Original title',
-                'severity' => 'high',
-                'description' => 'Original description',
-            ]],
+            'findings' => $findings,
         ]);
         $path = "pentesin_runs/web-{$scan->id}/report_narratives.json";
-        $englishResponse = ['findings' => [[
-            'finding_id' => 'finding-1',
-            'en' => ['title' => 'English title', 'description' => 'English description', 'impact' => 'English impact', 'technical_analysis' => 'English analysis', 'remediation' => 'English remediation'],
-        ]]];
-        $indonesianResponse = ['findings' => [[
-            'finding_id' => 'finding-1',
-            'id' => ['title' => 'Judul Indonesia', 'description' => 'Deskripsi Indonesia', 'impact' => 'Dampak Indonesia', 'technical_analysis' => 'Analisis Indonesia', 'remediation' => 'Remediasi Indonesia'],
-        ]]];
+        $makeNarratives = fn (array $items, string $language): array => array_map(
+            fn (array $finding): array => [
+                'finding_id' => $finding['id'],
+                $language => [
+                    'title' => "{$language} title {$finding['id']}",
+                    'description' => "{$language} description {$finding['id']}",
+                    'impact' => "{$language} impact {$finding['id']}",
+                    'technical_analysis' => "{$language} analysis {$finding['id']}",
+                    'remediation' => "{$language} remediation {$finding['id']}",
+                ],
+            ],
+            $items,
+        );
+        $indonesianRows = $makeNarratives($findings, 'id');
+        $englishRows = $makeNarratives($findings, 'en');
 
         Http::fakeSequence()
-            ->push(['choices' => [['message' => ['content' => json_encode($englishResponse)]]]], 200)
-            ->push(['choices' => [['message' => ['content' => json_encode($indonesianResponse)]]]], 200);
+            ->push(['choices' => [['message' => ['content' => json_encode(['findings' => array_slice($indonesianRows, 0, 3)])]]]], 200)
+            ->push(['choices' => [['message' => ['content' => json_encode(['findings' => array_slice($indonesianRows, 3)])]]]], 200)
+            ->push(['choices' => [['message' => ['content' => json_encode(['findings' => array_slice($englishRows, 0, 3)])]]]], 200)
+            ->push(['choices' => [['message' => ['content' => json_encode(['findings' => array_slice($englishRows, 3)])]]]], 200);
 
         $this->actingAs($user)
             ->postJson(route('scans.report.synthesize', $scan))
             ->assertOk()
-            ->assertJson(['success' => true, 'count' => 1]);
+            ->assertJson(['success' => true, 'count' => 4]);
 
-        Http::assertSentCount(2);
-        Http::assertSent(fn ($request): bool => str_contains($request['messages'][1]['content'], 'English')
-            && ! str_contains($request['messages'][1]['content'], 'Indonesian'));
-        Http::assertSent(fn ($request): bool => str_contains($request['messages'][1]['content'], 'Indonesian')
-            && ! str_contains($request['messages'][1]['content'], 'English'));
+        Http::assertSentCount(4);
+        Http::assertSentInOrder([
+            fn ($request): bool => str_contains($request['messages'][1]['content'], 'Indonesian')
+                && str_contains($request['messages'][1]['content'], 'finding-1')
+                && str_contains($request['messages'][1]['content'], 'finding-3')
+                && ! str_contains($request['messages'][1]['content'], 'finding-4'),
+            fn ($request): bool => str_contains($request['messages'][1]['content'], 'Indonesian')
+                && str_contains($request['messages'][1]['content'], 'finding-4')
+                && ! str_contains($request['messages'][1]['content'], 'finding-1'),
+            fn ($request): bool => str_contains($request['messages'][1]['content'], 'English')
+                && str_contains($request['messages'][1]['content'], 'finding-1')
+                && str_contains($request['messages'][1]['content'], 'finding-3')
+                && ! str_contains($request['messages'][1]['content'], 'finding-4'),
+            fn ($request): bool => str_contains($request['messages'][1]['content'], 'English')
+                && str_contains($request['messages'][1]['content'], 'finding-4')
+                && ! str_contains($request['messages'][1]['content'], 'finding-1'),
+        ]);
 
         $stored = json_decode(Storage::disk('local')->get($path), true);
-        $this->assertSame('English title', $stored['findings'][0]['en']['title']);
-        $this->assertSame('Judul Indonesia', $stored['findings'][0]['id']['title']);
+        $this->assertSame('en title finding-1', $stored['findings'][0]['en']['title']);
+        $this->assertSame('id title finding-1', $stored['findings'][0]['id']['title']);
+        $this->assertSame(4, count($stored['findings']));
         $this->assertContains('report_narratives.json', $scan->fresh()->artifacts);
     }
 
@@ -338,13 +361,13 @@ class DashboardFeatureTest extends TestCase
         $path = "pentesin_runs/web-{$scan->id}/report_narratives.json";
         $previous = ['findings' => [['finding_id' => 'finding-1', 'en' => ['title' => 'Previous English'], 'id' => ['title' => 'Judul Sebelumnya']]]];
         Storage::disk('local')->put($path, json_encode($previous));
-        $englishResponse = ['findings' => [[
+        $indonesianResponse = ['findings' => [[
             'finding_id' => 'finding-1',
-            'en' => ['title' => 'New English', 'description' => 'English description', 'impact' => 'English impact', 'technical_analysis' => 'English analysis', 'remediation' => 'English remediation'],
+            'id' => ['title' => 'Judul Indonesia', 'description' => 'Deskripsi', 'impact' => 'Dampak', 'technical_analysis' => 'Analisis', 'remediation' => 'Remediasi'],
         ]]];
         Http::fakeSequence()
-            ->push(['choices' => [['message' => ['content' => json_encode($englishResponse)]]]], 200)
-            ->push(['error' => ['message' => 'Indonesian synthesis failed']], 502);
+            ->push(['choices' => [['message' => ['content' => json_encode($indonesianResponse)]]]], 200)
+            ->push(['error' => ['message' => 'English synthesis failed']], 502);
 
         $this->actingAs($user)
             ->postJson(route('scans.report.synthesize', $scan))
@@ -352,6 +375,10 @@ class DashboardFeatureTest extends TestCase
             ->assertJsonPath('success', false);
 
         Http::assertSentCount(2);
+        Http::assertSentInOrder([
+            fn ($request): bool => str_contains($request['messages'][1]['content'], 'Indonesian'),
+            fn ($request): bool => str_contains($request['messages'][1]['content'], 'English'),
+        ]);
         $this->assertSame($previous, json_decode(Storage::disk('local')->get($path), true));
         $this->assertSame(['report_narratives.json'], $scan->fresh()->artifacts);
     }
