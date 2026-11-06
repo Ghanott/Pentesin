@@ -275,7 +275,13 @@ class DashboardController extends Controller
         }
 
         $narrativesPath = "pentesin_runs/web-{$scan->id}/report_narratives.json";
-        $saved = Storage::disk('local')->put($narrativesPath, json_encode($merged, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+        $encodedMerged = json_encode($merged, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        $saved = Storage::disk('local')->put($narrativesPath, $encodedMerged);
+        if (! $saved) {
+            $absPath = storage_path("app/private/{$narrativesPath}");
+            @file_put_contents($absPath, $encodedMerged);
+            $saved = Storage::disk('local')->exists($narrativesPath);
+        }
         if (! $saved) {
             return response()->json(['success' => false, 'error' => 'Gagal menyimpan hasil parafrase.'], 500);
         }
