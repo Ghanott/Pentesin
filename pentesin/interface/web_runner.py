@@ -388,6 +388,14 @@ async def _supervise_scan(  # noqa: PLR0915
         while not stop.is_set():
             try:
                 await heartbeat()
+            except urllib.error.HTTPError as exc:
+                if exc.code in {404, 409}:
+                    logger.warning("Scan ended or lease revoked on server (%s), stopping scan locally", exc.code)
+                    operator_stopped = True
+                    if scan_task is not None:
+                        scan_task.cancel()
+                    return
+                logger.exception("Runner heartbeat failed")
             except Exception:
                 logger.exception("Runner heartbeat failed")
             with contextlib.suppress(TimeoutError):
