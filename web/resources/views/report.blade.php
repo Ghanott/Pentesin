@@ -1648,13 +1648,27 @@
         </div>
     </dialog>
 
+    @php
+        $synthTargets = array_values(array_map(
+            fn (array $f, int $idx): array => [
+                'id' => (string) ($f['id'] ?? ('vuln-'.$idx)),
+                'title' => (string) ($f['title'] ?? ('Finding '.($idx + 1))),
+            ],
+            $findings,
+            array_keys($findings),
+        ));
+    @endphp
+
     <script>
         const btnSynthesize = document.getElementById('btn-synthesize');
         const aiModal = document.getElementById('ai-loading-modal');
         const progressBar = document.getElementById('ai-progress-bar');
+        const modalSubtitle = document.getElementById('ai-modal-subtitle');
+        const modalTip = document.getElementById('ai-modal-tip');
         const step1 = document.getElementById('step-1');
         const step2 = document.getElementById('step-2');
         const step3 = document.getElementById('step-3');
+        const synthTargets = @json($synthTargets);
 
         function setStepDone(stepEl) {
             stepEl.classList.remove('is-active');
@@ -1663,8 +1677,36 @@
         }
 
         function setStepActive(stepEl) {
+            stepEl.classList.remove('is-done');
             stepEl.classList.add('is-active');
             stepEl.querySelector('.step-indicator').innerHTML = '<span class="step-spinner"></span>';
+        }
+
+        function resetStepDot(stepEl) {
+            stepEl.classList.remove('is-active', 'is-done');
+            stepEl.querySelector('.step-indicator').innerHTML = '<span class="step-dot"></span>';
+        }
+
+        async function runSynthesisStep(findingId, language) {
+            const response = await fetch('{{ route("scans.report.synthesize", $scan) }}', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json',
+                    'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content,
+                },
+                body: JSON.stringify(findingId ? { finding_ids: [findingId], language } : {}),
+            });
+
+            let data = {};
+            try {
+                data = await response.json();
+            } catch (_) {}
+
+            if (!response.ok || !data.success) {
+                throw new Error(data.error || ('HTTP ' + response.status + ': Gagal memparafrase laporan.'));
+            }
+            return data;
         }
 
         if (btnSynthesize && aiModal) {
@@ -1674,66 +1716,62 @@
                 btnSynthesize.disabled = true;
                 btnSynthesize.classList.add('is-loading');
 
-                // Open modern clean popup
+                setStepActive(step1);
+                resetStepDot(step2);
+                resetStepDot(step3);
+                progressBar.style.width = '8%';
                 aiModal.showModal();
-                progressBar.style.width = '15%';
-
-                let progress = 15;
-                const progressInterval = setInterval(() => {
-                    if (progress < 92) {
-                        progress += Math.random() * 4 + 1.5;
-                        progressBar.style.width = Math.min(progress, 92) + '%';
-                    }
-                }, 1200);
-
-                const step2Timer = setTimeout(() => {
-                    setStepDone(step1);
-                    setStepActive(step2);
-                }, 7000);
-
-                const step3Timer = setTimeout(() => {
-                    setStepDone(step2);
-                    setStepActive(step3);
-                }, 18000);
 
                 try {
-                    const response = await fetch('{{ route("scans.report.synthesize", $scan) }}', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'Accept': 'application/json',
-                            'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content,
-                        },
-                    });
+                    if (synthTargets.length === 0) {
+                        await runSynthesisStep(null, null);
+                    } else {
+                        const jobs = [];
+                        for (const lang of ['id', 'en']) {
+                            for (let i = 0; i < synthTargets.length; i++) {
+                                jobs.push({
+                                    findingId: synthTargets[i].id,
+                                    title: synthTargets[i].title,
+                                    lang,
+                                    index: i + 1,
+                                    totalFindings: synthTargets.length,
+                                });
+                            }
+                        }
 
-                    clearInterval(progressInterval);
-                    clearTimeout(step2Timer);
-                    clearTimeout(step3Timer);
+                        for (let idx = 0; idx < jobs.length; idx++) {
+                            const job = jobs[idx];
+                            const langLabel = job.lang === 'id' ? 'Bahasa Indonesia' : 'English';
+                            if (job.lang === 'id' && idx === Math.floor(synthTargets.length / 2)) {
+                                setStepDone(step1);
+                                setStepActive(step2);
+                            } else if (job.lang === 'en' && !step2.classList.contains('is-done')) {
+                                setStepDone(step1);
+                                setStepDone(step2);
+                                setStepActive(step3);
+                            }
 
-                    let data = {};
-                    try {
-                        data = await response.json();
-                    } catch (_) {}
+                            modalSubtitle.textContent = `{{ $isEn ? 'Synthesizing finding' : 'Memparafrase temuan' }} ${job.index}/${job.totalFindings} (${langLabel}): ${job.title}`;
+                            modalTip.textContent = `{{ $isEn ? 'Step' : 'Tahap' }} ${idx + 1}/${jobs.length} · {{ $isEn ? 'Saved incrementally per finding' : 'Disimpan bertahap per temuan' }}`;
 
-                    if (!response.ok || !data.success) {
-                        throw new Error(data.error || ('HTTP ' + response.status + ': Gagal memparafrase laporan.'));
+                            await runSynthesisStep(job.findingId, job.lang);
+
+                            const pct = Math.round(((idx + 1) / jobs.length) * 92) + 8;
+                            progressBar.style.width = Math.min(pct, 99) + '%';
+                        }
                     }
 
-                    // Success animation
                     setStepDone(step1);
                     setStepDone(step2);
                     setStepDone(step3);
                     progressBar.style.width = '100%';
                     document.getElementById('ai-modal-title').textContent = '{{ $isEn ? "Synthesis Complete!" : "Sintesis Selesai!" }}';
-                    document.getElementById('ai-modal-subtitle').textContent = '{{ $isEn ? "Reloading updated assessment report..." : "Memperbarui tampilan dokumen laporan..." }}';
+                    modalSubtitle.textContent = '{{ $isEn ? "Reloading updated assessment report..." : "Memperbarui tampilan dokumen laporan..." }}';
 
                     setTimeout(() => {
                         window.location.reload();
-                    }, 800);
+                    }, 700);
                 } catch (err) {
-                    clearInterval(progressInterval);
-                    clearTimeout(step2Timer);
-                    clearTimeout(step3Timer);
                     aiModal.close();
                     alert('Gagal: ' + err.message);
                     btnSynthesize.disabled = false;

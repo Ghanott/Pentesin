@@ -390,6 +390,9 @@ class DashboardController extends Controller
         ]);
     }
 
+    /**
+     * Synthesize publication-grade bilingual narratives for scan findings.
+     */
     public function synthesizeReport(Request $request, Scan $scan): JsonResponse
     {
         @ini_set('max_execution_time', '300');
@@ -398,140 +401,91 @@ class DashboardController extends Controller
         $this->expireOwnerLeases();
         $this->ownedScan($request, $scan);
 
+        $validated = $request->validate([
+            'finding_ids' => ['nullable', 'array', 'max:100'],
+            'finding_ids.*' => ['string', 'max:200'],
+            'language' => ['nullable', Rule::in(['id', 'en'])],
+            'llm_profile_id' => ['nullable', 'integer'],
+        ]);
+
         $findings = $scan->findings ?? [];
         if (empty($findings)) {
             return response()->json(['success' => false, 'error' => 'Tidak ada temuan kerentanan untuk diparafrase.']);
         }
 
-        $snapshot = $scan->llm_snapshot;
-        if (empty($snapshot['api_base']) || empty($snapshot['model'])) {
-            $profile = $scan->llm_profile_id ? LlmProfile::find($scan->llm_profile_id) : null;
-            if (! $profile) {
-                $profile = LlmProfile::where('user_id', $request->user()->id)->first();
-            }
-            if ($profile) {
-                $snapshot = [
-                    'api_base' => $profile->api_base,
-                    'api_key' => $profile->api_key,
-                    'model' => $profile->model,
-                    'api_type' => 'chat_completions',
-                ];
-            }
-        }
-
-        if (empty($snapshot['api_base']) || empty($snapshot['model'])) {
+        $candidates = $this->resolveSynthesisCandidates(
+            $request,
+            $scan,
+            isset($validated['llm_profile_id']) ? (int) $validated['llm_profile_id'] : null,
+        );
+        if (empty($candidates)) {
             return response()->json(['success' => false, 'error' => 'Konfigurasi LLM tidak ditemukan. Atur profil LLM di menu Pengaturan.'], 422);
         }
 
-        $base = rtrim($snapshot['api_base'] ?: 'https://api.openai.com/v1', '/');
-        $endpoint = str_ends_with($base, '/chat/completions') ? $base : $base.'/chat/completions';
-        $model = str_starts_with($snapshot['model'], 'openai/') ? substr($snapshot['model'], 7) : $snapshot['model'];
-
-        $payloadFindings = [];
-        foreach ($findings as $f) {
-            $payloadFindings[] = [
-                'id' => $f['id'] ?? 'vuln-'.uniqid(),
-                'title' => $f['title'] ?? '',
-                'severity' => $f['severity'] ?? 'info',
-                'target' => $f['target'] ?? '',
-                'endpoint' => $f['endpoint'] ?? '',
-                'cwe' => $f['cwe'] ?? '',
-                'description' => $f['description'] ?? '',
-                'impact' => $f['impact'] ?? '',
-                'technical_analysis' => $f['technical_analysis'] ?? '',
-                'remediation_steps' => $f['remediation_steps'] ?? '',
+        $allFindings = [];
+        foreach (array_values($findings) as $idx => $f) {
+            if (! is_array($f)) {
+                continue;
+            }
+            $allFindings[] = [
+                'id' => (string) ($f['id'] ?? 'vuln-'.$idx),
+                'title' => (string) ($f['title'] ?? ''),
+                'severity' => (string) ($f['severity'] ?? 'info'),
+                'target' => (string) ($f['target'] ?? ''),
+                'endpoint' => (string) ($f['endpoint'] ?? ''),
+                'cwe' => (string) ($f['cwe'] ?? ''),
+                'description' => $this->trimNarrativeField((string) ($f['description'] ?? ''), 2500),
+                'impact' => $this->trimNarrativeField((string) ($f['impact'] ?? ''), 1500),
+                'technical_analysis' => $this->trimNarrativeField((string) ($f['technical_analysis'] ?? ''), 2500),
+                'remediation_steps' => $this->trimNarrativeField((string) ($f['remediation_steps'] ?? ''), 1500),
             ];
         }
 
-        $caBundle = base_path('../.venv/Lib/site-packages/certifi/cacert.pem');
-        $client = Http::timeout(120)->acceptJson()->withOptions(['verify' => is_file($caBundle) ? $caBundle : false]);
-        if (filled($snapshot['api_key'] ?? null)) {
-            $client = $client->withToken($snapshot['api_key']);
+        $requestedIds = array_values(array_unique($validated['finding_ids'] ?? []));
+        $targetFindings = empty($requestedIds)
+            ? $allFindings
+            : array_values(array_filter(
+                $allFindings,
+                static fn (array $item): bool => in_array($item['id'], $requestedIds, true),
+            ));
+
+        if (empty($targetFindings)) {
+            return response()->json(['success' => false, 'error' => 'Temuan yang diminta untuk diparafrase tidak ditemukan.'], 422);
         }
 
+        $targetLanguages = isset($validated['language']) ? [$validated['language']] : ['id', 'en'];
+        $isIncremental = ! empty($requestedIds) || isset($validated['language']);
+
+        $caBundle = base_path('../.venv/Lib/site-packages/certifi/cacert.pem');
+        $verifySsl = is_file($caBundle) ? $caBundle : false;
+
         $languageNarratives = [];
-        $expectedIds = array_column($payloadFindings, 'id');
-        foreach (['id', 'en'] as $language) {
+        $expectedIds = array_column($targetFindings, 'id');
+        $activeCandidateIndex = 0;
+
+        foreach ($targetLanguages as $language) {
             $languageName = $language === 'en' ? 'English' : 'Indonesian';
             $languageNarratives[$language] = [];
 
-            foreach (array_chunk($payloadFindings, 3) as $batch) {
-                $languageRequirement = $language === 'en'
-                    ? 'Write only in fluent professional English, following HackerOne VRT terminology.'
-                    : 'Tulis hanya dalam Bahasa Indonesia formal dengan terminologi keamanan siber yang tepat, sesuai standar BSSN / ISO 27001.';
-                $prompt = "You are a Principal Penetration Tester and Lead Security Auditor. Rewrite publication-grade vulnerability report narratives for an international cybersecurity audit.\n";
-                $prompt .= "Produce this request's output only in {$languageName}. {$languageRequirement}\n";
-                $prompt .= "For EACH input finding, preserve the finding ID and provide high-quality title, description, impact, technical_analysis, and remediation. Do not invent facts or change severity.\n";
-                $prompt .= "Target findings input (JSON):\n".json_encode($batch, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)."\n\n";
-                $prompt .= "Return ONLY valid JSON, no markdown or explanation, using this schema and this language key only:\n";
-                $prompt .= json_encode([
-                    'findings' => [[
-                        'finding_id' => 'string',
-                        $language => [
-                            'title' => '...',
-                            'description' => '...',
-                            'impact' => '...',
-                            'technical_analysis' => '...',
-                            'remediation' => '...',
-                        ],
-                    ]],
-                ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+            foreach (array_chunk($targetFindings, 3) as $batch) {
+                $chunkResult = $this->synthesizeBatchResilient(
+                    $batch,
+                    $language,
+                    $languageName,
+                    $candidates,
+                    $activeCandidateIndex,
+                    $verifySsl,
+                );
 
-                try {
-                    $res = $client->post($endpoint, [
-                        'model' => $model,
-                        'messages' => [
-                            ['role' => 'system', 'content' => 'You are an expert security report synthesizer. Output strictly valid JSON without code fences or surrounding commentary.'],
-                            ['role' => 'user', 'content' => $prompt],
-                        ],
-                        'temperature' => 0.2,
-                        'max_tokens' => 8192,
-                    ]);
-
-                    if (! $res->successful()) {
-                        $err = data_get($res->json(), 'error.message') ?: ('HTTP '.$res->status());
-
-                        return response()->json(['success' => false, 'error' => "Gagal membuat narasi {$languageName}: ".$err], 502);
-                    }
-
-                    $rawContent = data_get($res->json(), 'choices.0.message.content') ?? '';
-                    $trimmed = trim((string) $rawContent);
-                    if (str_starts_with($trimmed, '```')) {
-                        $trimmed = preg_replace('/^```(?:json)?\s*/i', '', $trimmed);
-                        $trimmed = preg_replace('/\s*```$/', '', $trimmed);
-                    }
-
-                    $parsed = json_decode($trimmed, true);
-                    if (! is_array($parsed) || ! is_array($parsed['findings'] ?? null)) {
-                        return response()->json(['success' => false, 'error' => "Format respons {$languageName} tidak valid sebagai JSON temuan."], 502);
-                    }
-
-                    $batchIds = array_column($batch, 'id');
-                    $byFindingId = [];
-                    foreach ($parsed['findings'] as $translatedFinding) {
-                        if (! is_array($translatedFinding)) {
-                            return response()->json(['success' => false, 'error' => "Format temuan {$languageName} tidak valid."], 502);
-                        }
-                        $findingId = $translatedFinding['finding_id'] ?? $translatedFinding['id'] ?? null;
-                        $narrative = $translatedFinding[$language] ?? null;
-                        if (! is_string($findingId) || ! in_array($findingId, $batchIds, true) || isset($byFindingId[$findingId]) || ! is_array($narrative)) {
-                            return response()->json(['success' => false, 'error' => "Respons {$languageName} tidak cocok dengan batch temuan."], 502);
-                        }
-                        foreach (['title', 'description', 'impact', 'technical_analysis', 'remediation'] as $field) {
-                            if (! is_string($narrative[$field] ?? null) || trim($narrative[$field]) === '') {
-                                return response()->json(['success' => false, 'error' => "Respons {$languageName} tidak lengkap untuk temuan {$findingId}."], 502);
-                            }
-                        }
-                        $byFindingId[$findingId] = $narrative;
-                    }
-
-                    if (count($byFindingId) !== count($batchIds)) {
-                        return response()->json(['success' => false, 'error' => "Respons {$languageName} tidak mencakup seluruh temuan dalam batch."], 502);
-                    }
-                    $languageNarratives[$language] += $byFindingId;
-                } catch (\Throwable $e) {
-                    return response()->json(['success' => false, 'error' => "Kesalahan saat sintesis {$languageName}: ".$e->getMessage()], 500);
+                if (! $chunkResult['ok']) {
+                    return response()->json(
+                        ['success' => false, 'error' => $chunkResult['error']],
+                        $chunkResult['status'],
+                    );
                 }
+
+                $activeCandidateIndex = $chunkResult['candidate_index'];
+                $languageNarratives[$language] += $chunkResult['narratives'];
             }
 
             if (count($languageNarratives[$language]) !== count($expectedIds)) {
@@ -539,26 +493,398 @@ class DashboardController extends Controller
             }
         }
 
-        $merged = ['findings' => []];
-        foreach ($payloadFindings as $finding) {
-            $findingId = $finding['id'];
-            $merged['findings'][] = [
-                'finding_id' => $findingId,
-                'en' => $languageNarratives['en'][$findingId],
-                'id' => $languageNarratives['id'][$findingId],
+        $savedCount = $this->persistSynthesisNarratives($scan, $allFindings, $languageNarratives, $isIncremental);
+        if ($savedCount === null) {
+            return response()->json(['success' => false, 'error' => 'Gagal menyimpan hasil parafrase.'], 500);
+        }
+
+        return response()->json(['success' => true, 'count' => $savedCount]);
+    }
+
+    /**
+     * Build ordered deduplicated LLM endpoint candidates for synthesis.
+     *
+     * @return list<array{api_base: string, api_key: ?string, model: string, endpoint: string}>
+     */
+    private function resolveSynthesisCandidates(Request $request, Scan $scan, ?int $requestedProfileId): array
+    {
+        $rawCandidates = [];
+
+        if ($requestedProfileId !== null) {
+            $explicit = LlmProfile::where('user_id', $request->user()->id)->find($requestedProfileId);
+            if ($explicit) {
+                $rawCandidates[] = [
+                    'api_base' => $explicit->api_base,
+                    'api_key' => $explicit->api_key,
+                    'model' => $explicit->model,
+                ];
+            }
+        }
+
+        $snapshot = is_array($scan->llm_snapshot) ? $scan->llm_snapshot : [];
+        if (! empty($snapshot['api_base']) && ! empty($snapshot['model'])) {
+            $rawCandidates[] = [
+                'api_base' => $snapshot['api_base'],
+                'api_key' => $snapshot['api_key'] ?? null,
+                'model' => $snapshot['model'],
             ];
         }
 
+        if ($scan->llm_profile_id) {
+            $scanProfile = LlmProfile::where('user_id', $request->user()->id)->find($scan->llm_profile_id);
+            if ($scanProfile) {
+                $rawCandidates[] = [
+                    'api_base' => $scanProfile->api_base,
+                    'api_key' => $scanProfile->api_key,
+                    'model' => $scanProfile->model,
+                ];
+            }
+        }
+
+        foreach (LlmProfile::where('user_id', $request->user()->id)->orderBy('id')->get() as $profile) {
+            $rawCandidates[] = [
+                'api_base' => $profile->api_base,
+                'api_key' => $profile->api_key,
+                'model' => $profile->model,
+            ];
+        }
+
+        $candidates = [];
+        $seen = [];
+        foreach ($rawCandidates as $item) {
+            if (empty($item['api_base']) || empty($item['model'])) {
+                continue;
+            }
+            $base = rtrim((string) $item['api_base'], '/');
+            $endpoint = str_ends_with($base, '/chat/completions') ? $base : $base.'/chat/completions';
+            $rawModel = (string) $item['model'];
+            $model = str_starts_with($rawModel, 'openai/') ? substr($rawModel, 7) : $rawModel;
+            $dedupeKey = strtolower($endpoint.'|'.$model);
+            if (isset($seen[$dedupeKey])) {
+                continue;
+            }
+            $seen[$dedupeKey] = true;
+            $candidates[] = [
+                'api_base' => $base,
+                'api_key' => $item['api_key'] ?? null,
+                'model' => $model,
+                'endpoint' => $endpoint,
+            ];
+        }
+
+        return $candidates;
+    }
+
+    /**
+     * Execute synthesis for a batch with profile fallback and automatic single-finding split on failure.
+     *
+     * @param  list<array<string, mixed>>  $batch
+     * @param  list<array{api_base: string, api_key: ?string, model: string, endpoint: string}>  $candidates
+     * @return array{ok: bool, narratives?: array<string, array<string, string>>, candidate_index?: int, error?: string, status?: int}
+     */
+    private function synthesizeBatchResilient(
+        array $batch,
+        string $language,
+        string $languageName,
+        array $candidates,
+        int $preferredIndex,
+        string|bool $verifySsl,
+    ): array {
+        $orderedIndexes = [$preferredIndex];
+        foreach (array_keys($candidates) as $idx) {
+            if ($idx !== $preferredIndex) {
+                $orderedIndexes[] = $idx;
+            }
+        }
+
+        $lastFailure = ['ok' => false, 'error' => "Gagal membuat narasi {$languageName}.", 'status' => 502];
+
+        foreach ($orderedIndexes as $idx) {
+            $result = $this->requestSynthesisBatch($batch, $language, $languageName, $candidates[$idx], $verifySsl);
+            if ($result['ok']) {
+                return [
+                    'ok' => true,
+                    'narratives' => $result['narratives'],
+                    'candidate_index' => $idx,
+                ];
+            }
+            $lastFailure = $result;
+        }
+
+        if (count($batch) > 1) {
+            $splitNarratives = [];
+            $workingIdx = $preferredIndex;
+            foreach ($batch as $singleItem) {
+                $singleRes = $this->synthesizeBatchResilient(
+                    [$singleItem],
+                    $language,
+                    $languageName,
+                    $candidates,
+                    $workingIdx,
+                    $verifySsl,
+                );
+                if (! $singleRes['ok']) {
+                    return $singleRes;
+                }
+                $workingIdx = $singleRes['candidate_index'];
+                $splitNarratives += $singleRes['narratives'];
+            }
+
+            return [
+                'ok' => true,
+                'narratives' => $splitNarratives,
+                'candidate_index' => $workingIdx,
+            ];
+        }
+
+        return $lastFailure;
+    }
+
+    /**
+     * Send one chat-completion request for a batch of findings and parse strict/tolerant JSON narratives.
+     *
+     * @param  list<array<string, mixed>>  $batch
+     * @param  array{api_base: string, api_key: ?string, model: string, endpoint: string}  $candidate
+     * @return array{ok: bool, narratives?: array<string, array<string, string>>, error?: string, status?: int}
+     */
+    private function requestSynthesisBatch(
+        array $batch,
+        string $language,
+        string $languageName,
+        array $candidate,
+        string|bool $verifySsl,
+    ): array {
+        $languageRequirement = $language === 'en'
+            ? 'Write only in fluent professional English, following HackerOne VRT terminology.'
+            : 'Tulis hanya dalam Bahasa Indonesia formal dengan terminologi keamanan siber yang tepat, sesuai standar BSSN / ISO 27001.';
+
+        $prompt = "You are a Principal Penetration Tester and Lead Security Auditor. Rewrite publication-grade vulnerability report narratives for an international cybersecurity audit.\n";
+        $prompt .= "Produce this request's output only in {$languageName}. {$languageRequirement}\n";
+        $prompt .= "For EACH input finding, preserve the finding ID and provide high-quality title, description, impact, technical_analysis, and remediation. Do not invent facts or change severity.\n";
+        $prompt .= "Target findings input (JSON):\n".json_encode($batch, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)."\n\n";
+        $prompt .= "Return ONLY valid JSON, no markdown fences, thinking tags, or explanation, using this schema and this language key only:\n";
+        $prompt .= json_encode([
+            'findings' => [[
+                'finding_id' => 'string',
+                $language => [
+                    'title' => '...',
+                    'description' => '...',
+                    'impact' => '...',
+                    'technical_analysis' => '...',
+                    'remediation' => '...',
+                ],
+            ]],
+        ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+
+        $timeoutSeconds = count($batch) === 1 ? 85 : 120;
+        $client = Http::timeout($timeoutSeconds)->acceptJson()->withOptions(['verify' => $verifySsl]);
+        if (filled($candidate['api_key'] ?? null)) {
+            $client = $client->withToken((string) $candidate['api_key']);
+        }
+
+        try {
+            $res = $client->post($candidate['endpoint'], [
+                'model' => $candidate['model'],
+                'messages' => [
+                    ['role' => 'system', 'content' => 'You are an expert security report synthesizer. Output strictly valid JSON without code fences or surrounding commentary.'],
+                    ['role' => 'user', 'content' => $prompt],
+                ],
+                'temperature' => 0.2,
+                'max_tokens' => 8192,
+            ]);
+
+            if (! $res->successful()) {
+                $err = data_get($res->json(), 'error.message') ?: ('HTTP '.$res->status());
+
+                return ['ok' => false, 'error' => "Gagal membuat narasi {$languageName}: ".$err, 'status' => 502];
+            }
+
+            $payloadJson = $res->json();
+            $rawContent = (string) (data_get($payloadJson, 'choices.0.message.content') ?? '');
+            if (trim($rawContent) === '') {
+                $reasoning = (string) (data_get($payloadJson, 'choices.0.message.reasoning_content') ?? '');
+                if (str_contains($reasoning, '{') && str_contains($reasoning, '"title"')) {
+                    $rawContent = $reasoning;
+                } else {
+                    $finishReason = (string) (data_get($payloadJson, 'choices.0.finish_reason') ?? '');
+                    $hint = $finishReason === 'length'
+                        ? 'Model kehabisan token reasoning sebelum menulis output JSON.'
+                        : 'Respons model kosong.';
+
+                    return ['ok' => false, 'error' => "Format respons {$languageName} tidak valid ({$hint}).", 'status' => 502];
+                }
+            }
+
+            $parsed = $this->decodeNarrativeJson($rawContent);
+            if (! is_array($parsed)) {
+                return ['ok' => false, 'error' => "Format respons {$languageName} tidak valid sebagai JSON temuan.", 'status' => 502];
+            }
+
+            $items = $parsed['findings'] ?? null;
+            if (! is_array($items) && count($batch) === 1 && (isset($parsed['title']) || isset($parsed[$language]))) {
+                $items = [$parsed];
+            }
+            if (! is_array($items)) {
+                return ['ok' => false, 'error' => "Format respons {$languageName} tidak valid sebagai JSON temuan.", 'status' => 502];
+            }
+
+            $sourceById = [];
+            foreach ($batch as $src) {
+                $sourceById[$src['id']] = $src;
+            }
+            $batchIds = array_keys($sourceById);
+            $byFindingId = [];
+
+            foreach ($items as $translatedFinding) {
+                if (! is_array($translatedFinding)) {
+                    return ['ok' => false, 'error' => "Format temuan {$languageName} tidak valid.", 'status' => 502];
+                }
+                $findingId = $translatedFinding['finding_id'] ?? $translatedFinding['id'] ?? null;
+                if ((! is_string($findingId) || ! in_array($findingId, $batchIds, true)) && count($batch) === 1 && empty($byFindingId)) {
+                    $findingId = $batch[0]['id'];
+                }
+                $narrative = $translatedFinding[$language] ?? null;
+                if (! is_array($narrative) && isset($translatedFinding['title'], $translatedFinding['description'])) {
+                    $narrative = $translatedFinding;
+                }
+                if (! is_string($findingId) || ! in_array($findingId, $batchIds, true) || isset($byFindingId[$findingId]) || ! is_array($narrative)) {
+                    return ['ok' => false, 'error' => "Respons {$languageName} tidak cocok dengan batch temuan.", 'status' => 502];
+                }
+
+                if (empty($narrative['remediation']) && ! empty($narrative['remediation_steps'])) {
+                    $narrative['remediation'] = $narrative['remediation_steps'];
+                }
+
+                $source = $sourceById[$findingId];
+                $normalized = [
+                    'title' => trim((string) ($narrative['title'] ?? '')),
+                    'description' => trim((string) ($narrative['description'] ?? '')),
+                    'impact' => trim((string) ($narrative['impact'] ?? ($source['impact'] !== '' ? $source['impact'] : '-'))),
+                    'technical_analysis' => trim((string) ($narrative['technical_analysis'] ?? ($source['technical_analysis'] !== '' ? $source['technical_analysis'] : '-'))),
+                    'remediation' => trim((string) ($narrative['remediation'] ?? ($source['remediation_steps'] !== '' ? $source['remediation_steps'] : '-'))),
+                ];
+
+                if ($normalized['title'] === '' || $normalized['description'] === '') {
+                    return ['ok' => false, 'error' => "Respons {$languageName} tidak lengkap untuk temuan {$findingId}.", 'status' => 502];
+                }
+
+                $byFindingId[$findingId] = $normalized;
+            }
+
+            if (count($byFindingId) !== count($batchIds)) {
+                return ['ok' => false, 'error' => "Respons {$languageName} tidak mencakup seluruh temuan dalam batch.", 'status' => 502];
+            }
+
+            return ['ok' => true, 'narratives' => $byFindingId];
+        } catch (\Throwable $e) {
+            return ['ok' => false, 'error' => "Kesalahan saat sintesis {$languageName}: ".$e->getMessage(), 'status' => 500];
+        }
+    }
+
+    /**
+     * Decode LLM JSON even when wrapped in think tags, markdown fences, or prose.
+     *
+     * @return array<string, mixed>|null
+     */
+    private function decodeNarrativeJson(string $rawContent): ?array
+    {
+        $cleaned = preg_replace('/<think\b[^>]*>.*?<\/think>/is', '', $rawContent) ?? $rawContent;
+        $trimmed = trim($cleaned);
+
+        if (preg_match('/```(?:json)?\s*([\s\S]*?)\s*```/i', $trimmed, $fenceMatch) === 1) {
+            $trimmed = trim($fenceMatch[1]);
+        }
+
+        $decoded = json_decode($trimmed, true);
+        if (is_array($decoded)) {
+            return $decoded;
+        }
+
+        $firstBrace = strpos($trimmed, '{');
+        $lastBrace = strrpos($trimmed, '}');
+        if ($firstBrace !== false && $lastBrace !== false && $lastBrace > $firstBrace) {
+            $slice = substr($trimmed, $firstBrace, $lastBrace - $firstBrace + 1);
+            $decodedSlice = json_decode($slice, true);
+            if (is_array($decodedSlice)) {
+                return $decodedSlice;
+            }
+        }
+
+        return null;
+    }
+
+    private function trimNarrativeField(string $value, int $maxLength): string
+    {
+        $normalized = trim($value);
+        if (mb_strlen($normalized) <= $maxLength) {
+            return $normalized;
+        }
+
+        return rtrim(mb_substr($normalized, 0, $maxLength)).'...';
+    }
+
+    /**
+     * Persist merged narratives into report_narratives.json, preserving partial progress when incremental.
+     *
+     * @param  list<array<string, mixed>>  $allFindings
+     * @param  array<string, array<string, array<string, string>>>  $languageNarratives
+     */
+    private function persistSynthesisNarratives(Scan $scan, array $allFindings, array $languageNarratives, bool $mergeExisting): ?int
+    {
         $narrativesPath = "pentesin_runs/web-{$scan->id}/report_narratives.json";
+        $existingById = [];
+
+        if ($mergeExisting && Storage::disk('local')->exists($narrativesPath)) {
+            $existingData = json_decode((string) Storage::disk('local')->get($narrativesPath), true);
+            if (is_array($existingData) && is_array($existingData['findings'] ?? null)) {
+                foreach ($existingData['findings'] as $row) {
+                    if (! is_array($row)) {
+                        continue;
+                    }
+                    $id = $row['finding_id'] ?? $row['id'] ?? null;
+                    if (is_string($id) && $id !== '') {
+                        $existingById[$id] = $row;
+                    }
+                }
+            }
+        }
+
+        $merged = ['findings' => []];
+        foreach ($allFindings as $finding) {
+            $findingId = (string) $finding['id'];
+            $entry = is_array($existingById[$findingId] ?? null)
+                ? $existingById[$findingId]
+                : ['finding_id' => $findingId];
+            $entry['finding_id'] = $findingId;
+
+            foreach (['en', 'id'] as $langKey) {
+                if (isset($languageNarratives[$langKey][$findingId])) {
+                    $entry[$langKey] = $languageNarratives[$langKey][$findingId];
+                }
+            }
+
+            if (isset($entry['en']) || isset($entry['id'])) {
+                $merged['findings'][] = $entry;
+            }
+        }
+
         $encodedMerged = json_encode($merged, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        if ($encodedMerged === false) {
+            return null;
+        }
+
         $saved = Storage::disk('local')->put($narrativesPath, $encodedMerged);
         if (! $saved) {
             $absPath = storage_path("app/private/{$narrativesPath}");
+            $dir = dirname($absPath);
+            if (! is_dir($dir)) {
+                @mkdir($dir, 0775, true);
+            }
             @file_put_contents($absPath, $encodedMerged);
             $saved = Storage::disk('local')->exists($narrativesPath);
         }
         if (! $saved) {
-            return response()->json(['success' => false, 'error' => 'Gagal menyimpan hasil parafrase.'], 500);
+            return null;
         }
 
         $artifacts = $scan->artifacts ?? [];
@@ -566,7 +892,7 @@ class DashboardController extends Controller
             $scan->update(['artifacts' => array_values(array_unique([...$artifacts, 'report_narratives.json']))]);
         }
 
-        return response()->json(['success' => true, 'count' => count($merged['findings'])]);
+        return count($merged['findings']);
     }
 
     public function store(Request $request): RedirectResponse

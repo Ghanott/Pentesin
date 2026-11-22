@@ -390,6 +390,121 @@ class DashboardFeatureTest extends TestCase
         $this->assertSame(['report_narratives.json'], $scan->fresh()->artifacts);
     }
 
+    public function test_report_synthesis_supports_single_finding_incremental_requests_and_merges_existing_narratives(): void
+    {
+        Storage::fake('local');
+        $user = User::factory()->create();
+        $profile = LlmProfile::create([
+            'user_id' => $user->id,
+            'name' => 'Report writer',
+            'model' => 'openai/report-model',
+            'api_base' => 'https://llm.example/v1',
+            'api_type' => 'chat_completions',
+            'api_key' => 'report-secret',
+        ]);
+        $scan = Scan::create([
+            'user_id' => $user->id,
+            'kind' => 'scan',
+            'target' => 'https://lab.example',
+            'mode' => 'standard',
+            'status' => 'completed',
+            'llm_profile_id' => $profile->id,
+            'llm_snapshot' => $profile->runnerProfile(),
+            'artifacts' => ['report_narratives.json'],
+            'findings' => [
+                ['id' => 'finding-1', 'title' => 'First', 'severity' => 'high'],
+                ['id' => 'finding-2', 'title' => 'Second', 'severity' => 'medium'],
+            ],
+        ]);
+        $path = "pentesin_runs/web-{$scan->id}/report_narratives.json";
+        Storage::disk('local')->put($path, json_encode([
+            'findings' => [[
+                'finding_id' => 'finding-2',
+                'en' => ['title' => 'Keep EN 2', 'description' => 'Desc 2', 'impact' => 'Imp 2', 'technical_analysis' => 'Tech 2', 'remediation' => 'Fix 2'],
+                'id' => ['title' => 'Simpan ID 2', 'description' => 'Desk 2', 'impact' => 'Dampak 2', 'technical_analysis' => 'Teknis 2', 'remediation' => 'Perbaikan 2'],
+            ]],
+        ]));
+
+        Http::fakeSequence()
+            ->push(['choices' => [['message' => ['content' => json_encode(['findings' => [[
+                'finding_id' => 'finding-1',
+                'id' => ['title' => 'Judul Baru 1', 'description' => 'Desk Baru 1', 'impact' => 'Dampak 1', 'technical_analysis' => 'Teknis 1', 'remediation' => 'Solusi 1'],
+            ]]])]]]], 200)
+            ->push(['choices' => [['message' => ['content' => json_encode(['findings' => [[
+                'finding_id' => 'finding-1',
+                'en' => ['title' => 'New Title 1', 'description' => 'New Desc 1', 'impact' => 'Impact 1', 'technical_analysis' => 'Tech 1', 'remediation' => 'Fix 1'],
+            ]]])]]]], 200);
+
+        $this->actingAs($user)
+            ->postJson(route('scans.report.synthesize', $scan), ['finding_ids' => ['finding-1'], 'language' => 'id'])
+            ->assertOk()
+            ->assertJson(['success' => true]);
+
+        $this->actingAs($user)
+            ->postJson(route('scans.report.synthesize', $scan), ['finding_ids' => ['finding-1'], 'language' => 'en'])
+            ->assertOk()
+            ->assertJson(['success' => true]);
+
+        Http::assertSentCount(2);
+        $stored = json_decode(Storage::disk('local')->get($path), true);
+        $byId = collect($stored['findings'])->keyBy('finding_id');
+        $this->assertSame('Judul Baru 1', $byId['finding-1']['id']['title']);
+        $this->assertSame('New Title 1', $byId['finding-1']['en']['title']);
+        $this->assertSame('Keep EN 2', $byId['finding-2']['en']['title']);
+    }
+
+    public function test_report_synthesis_falls_back_to_other_user_llm_profile_and_handles_think_tags(): void
+    {
+        Storage::fake('local');
+        $user = User::factory()->create();
+        $broken = LlmProfile::create([
+            'user_id' => $user->id,
+            'name' => 'Dead Tunnel',
+            'model' => 'openai/broken-model',
+            'api_base' => 'https://dead.example/v1',
+            'api_type' => 'chat_completions',
+            'api_key' => 'dead-key',
+        ]);
+        LlmProfile::create([
+            'user_id' => $user->id,
+            'name' => 'Healthy Backup',
+            'model' => 'openai/healthy-model',
+            'api_base' => 'https://healthy.example/v1',
+            'api_type' => 'chat_completions',
+            'api_key' => 'healthy-key',
+        ]);
+        $scan = Scan::create([
+            'user_id' => $user->id,
+            'kind' => 'scan',
+            'target' => 'https://lab.example',
+            'mode' => 'standard',
+            'status' => 'completed',
+            'llm_profile_id' => $broken->id,
+            'llm_snapshot' => $broken->runnerProfile(),
+            'artifacts' => [],
+            'findings' => [['id' => 'finding-1', 'title' => 'Original', 'severity' => 'high']],
+        ]);
+
+        $thinkWrapped = "<think>reasoning here</think>\nHere is the JSON:\n```json\n".json_encode(['findings' => [[
+            'finding_id' => 'finding-1',
+            'id' => ['title' => 'Judul ID', 'description' => 'Desk ID', 'impact' => 'Dampak ID', 'technical_analysis' => 'Teknis ID', 'remediation_steps' => 'Langkah ID'],
+        ]]])."\n```";
+
+        Http::fake([
+            'https://dead.example/*' => Http::response(['error' => ['message' => 'Origin DNS error']], 530),
+            'https://healthy.example/*' => Http::response(['choices' => [['message' => ['content' => $thinkWrapped]]]], 200),
+        ]);
+
+        $this->actingAs($user)
+            ->postJson(route('scans.report.synthesize', $scan), ['finding_ids' => ['finding-1'], 'language' => 'id'])
+            ->assertOk()
+            ->assertJson(['success' => true, 'count' => 1]);
+
+        $path = "pentesin_runs/web-{$scan->id}/report_narratives.json";
+        $stored = json_decode(Storage::disk('local')->get($path), true);
+        $this->assertSame('Langkah ID', $stored['findings'][0]['id']['remediation']);
+    }
+
     public function test_user_can_view_scan_report_in_id_and_en(): void
     {
         $user = User::factory()->create();
