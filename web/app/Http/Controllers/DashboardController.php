@@ -180,7 +180,10 @@ class DashboardController extends Controller
         $this->expireOwnerLeases();
         abort_unless($scan->user_id === request()->user()->id, 404);
 
-        return view('scan', ['scan' => $scan->fresh(), 'artifacts' => array_intersect($scan->artifacts ?? [], ['penetration_test_report.md', 'vulnerabilities.json'])]);
+        return view('scan', [
+            'scan' => $scan->fresh(),
+            'artifacts' => array_intersect($scan->artifacts ?? [], ['penetration_test_report.md', 'vulnerabilities.json', 'coverage.json']),
+        ]);
     }
 
     public function report(Request $request, Scan $scan): View
@@ -252,6 +255,138 @@ class DashboardController extends Controller
             'findings' => $findings,
             'lang' => $lang,
             'hasAiReport' => $hasAiReport,
+        ]);
+    }
+
+    public function vaReport(Request $request, Scan $scan): View
+    {
+        $this->expireOwnerLeases();
+        abort_unless($scan->user_id === $request->user()->id, 404);
+
+        $lang = strtolower((string) $request->query('lang', 'id'));
+        if (! in_array($lang, ['id', 'en'], true)) {
+            $lang = 'id';
+        }
+
+        $scan = $scan->fresh(['agents']);
+        $findings = is_array($scan->findings) ? $scan->findings : [];
+        $severityOrder = ['critical' => 0, 'high' => 1, 'medium' => 2, 'low' => 3, 'info' => 4];
+        usort($findings, function (array $a, array $b) use ($severityOrder): int {
+            $sevA = strtolower((string) ($a['severity'] ?? 'info'));
+            $sevB = strtolower((string) ($b['severity'] ?? 'info'));
+
+            return ($severityOrder[$sevA] ?? 5) <=> ($severityOrder[$sevB] ?? 5);
+        });
+
+        $coverage = null;
+        $coveragePath = "pentesin_runs/web-{$scan->id}/coverage.json";
+        if (Storage::disk('local')->exists($coveragePath)) {
+            $decoded = json_decode((string) Storage::disk('local')->get($coveragePath), true);
+            if (is_array($decoded)) {
+                $coverage = $decoded;
+            }
+        }
+
+        $hasCoverageData = is_array($coverage);
+        $entries = [];
+        if ($hasCoverageData && is_array($coverage['entries'] ?? null)) {
+            $entries = array_values(array_filter($coverage['entries'], 'is_array'));
+        } elseif (! empty($findings)) {
+            // Fallback for older scans executed before coverage.json tracking existed.
+            foreach ($findings as $finding) {
+                $entries[] = [
+                    'surface' => (string) ($finding['endpoint'] ?? ($finding['target'] ?? $scan->target)),
+                    'risk_area' => (string) ($finding['title'] ?? 'Security Finding'),
+                    'outcome' => 'reported',
+                    'outcome_label' => 'Reported',
+                    'evidence' => (string) ($finding['description'] ?? ($finding['impact'] ?? '')),
+                    'recorded_by' => (string) ($finding['agent'] ?? 'Pentesin'),
+                    'source' => 'legacy_findings',
+                ];
+            }
+        }
+
+        $outcomeOrder = [
+            'reported' => 0,
+            'needs_follow_up' => 1,
+            'no_issue_found' => 2,
+            'ruled_out' => 3,
+            'not_applicable' => 4,
+        ];
+        usort($entries, function (array $a, array $b) use ($outcomeOrder): int {
+            $orderA = $outcomeOrder[(string) ($a['outcome'] ?? '')] ?? 5;
+            $orderB = $outcomeOrder[(string) ($b['outcome'] ?? '')] ?? 5;
+            if ($orderA !== $orderB) {
+                return $orderA <=> $orderB;
+            }
+
+            $surfaceCmp = strnatcasecmp((string) ($a['surface'] ?? ''), (string) ($b['surface'] ?? ''));
+            if ($surfaceCmp !== 0) {
+                return $surfaceCmp;
+            }
+
+            return strnatcasecmp((string) ($a['risk_area'] ?? ''), (string) ($b['risk_area'] ?? ''));
+        });
+
+        $outcomes = [
+            'reported' => 0,
+            'no_issue_found' => 0,
+            'ruled_out' => 0,
+            'not_applicable' => 0,
+            'needs_follow_up' => 0,
+        ];
+        foreach ($entries as $entry) {
+            $key = (string) ($entry['outcome'] ?? '');
+            if (array_key_exists($key, $outcomes)) {
+                $outcomes[$key]++;
+            }
+        }
+        $outcomes['safe_total'] = $outcomes['no_issue_found'] + $outcomes['ruled_out'] + $outcomes['not_applicable'];
+        $outcomes['total_tested'] = count($entries);
+
+        $machineObserved = is_array($coverage['machine_observed'] ?? null) ? $coverage['machine_observed'] : [];
+        $agents = [];
+        if (is_array($machineObserved['agents'] ?? null) && ! empty($machineObserved['agents'])) {
+            $agents = array_values(array_filter($machineObserved['agents'], 'is_array'));
+        } else {
+            foreach ($scan->agents as $agent) {
+                $agents[] = [
+                    'agent_id' => $agent->agent_id,
+                    'agent_name' => $agent->name,
+                    'status' => $agent->status,
+                    'skills' => is_array($agent->skills) ? $agent->skills : [],
+                    'is_root' => (bool) ($agent->is_root ?? false),
+                ];
+            }
+        }
+
+        $skillsExercised = is_array($machineObserved['skills_exercised'] ?? null)
+            ? array_values(array_filter($machineObserved['skills_exercised'], 'is_string'))
+            : [];
+
+        $gaps = is_array($coverage['gaps'] ?? null)
+            ? array_values(array_filter($coverage['gaps'], 'is_array'))
+            : [];
+
+        $completeness = is_array($coverage['completeness'] ?? null) ? $coverage['completeness'] : [
+            'complete' => in_array($scan->status, ['completed'], true) && $hasCoverageData,
+            'scan_status' => $scan->status,
+            'exit_reason' => $scan->error_message ?? '',
+            'caveats' => [],
+        ];
+
+        return view('va-report', [
+            'scan' => $scan,
+            'lang' => $lang,
+            'hasCoverageData' => $hasCoverageData,
+            'coverage' => $coverage,
+            'entries' => $entries,
+            'outcomes' => $outcomes,
+            'findings' => $findings,
+            'agents' => $agents,
+            'skillsExercised' => $skillsExercised,
+            'gaps' => $gaps,
+            'completeness' => $completeness,
         ]);
     }
 

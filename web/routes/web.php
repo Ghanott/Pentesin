@@ -23,6 +23,7 @@ Route::middleware('auth')->group(function (): void {
     Route::post('/scans', [DashboardController::class, 'store'])->middleware('throttle:5,1')->name('scans.store');
     Route::get('/scans/{scan}', [DashboardController::class, 'show'])->name('scans.show');
     Route::get('/scans/{scan}/report', [DashboardController::class, 'report'])->name('scans.report');
+    Route::get('/scans/{scan}/va-report', [DashboardController::class, 'vaReport'])->name('scans.va-report');
     Route::post('/scans/{scan}/retest/{findingId}', [DashboardController::class, 'retestFinding'])->middleware('throttle:5,1')->name('scans.retest');
     Route::post('/scans/{scan}/report/synthesize', [DashboardController::class, 'synthesizeReport'])->name('scans.report.synthesize');
     Route::get('/scans/{scan}/feed', [DashboardController::class, 'feed'])->name('scans.feed');

@@ -27,23 +27,20 @@
 
             <div class="detail-head-actions">
                 <div class="actions-main-row">
+                    @php
+                        $hasReportButtons = count(array_intersect($artifacts, ['penetration_test_report.md', 'vulnerabilities.json', 'coverage.json'])) > 0
+                            || count($scan->findings ?? []) > 0
+                            || in_array($scan->status, ['completed', 'stopped', 'interrupted', 'failed'], true);
+                    @endphp
                     <div id="scan-artifacts" class="report-row" aria-label="Laporan pemindaian">
-                        @foreach($artifacts as $artifact)
-                            <a class="report-btn" href="{{ route('scans.artifacts', [$scan, $artifact]) }}">
-                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
-                                <span>{{ $artifact }}</span>
-                            </a>
-                            @if($artifact === 'vulnerabilities.json')
-                                <a class="report-btn is-pdf" href="{{ route('scans.report', $scan) }}" target="_blank" rel="noopener" title="Lihat dan cetak Laporan PDF (Standar HackerOne / PTES)">
-                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 6 2 18 2 18 9"></polyline><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path><rect x="6" y="14" width="12" height="8"></rect></svg>
-                                    <span>Laporan PDF</span>
-                                </a>
-                            @endif
-                        @endforeach
-                        @if(!in_array('vulnerabilities.json', $artifacts) && (count($scan->findings ?? []) > 0 || in_array($scan->status, ['completed', 'stopped'])))
-                            <a class="report-btn is-pdf" href="{{ route('scans.report', $scan) }}" target="_blank" rel="noopener" title="Lihat dan cetak Laporan PDF (Standar HackerOne / PTES)">
+                        @if($hasReportButtons)
+                            <a class="report-btn is-pdf" href="{{ route('scans.report', $scan) }}" target="_blank" rel="noopener" title="Lihat dan cetak Laporan Pentest PDF (Standar HackerOne / PTES)">
                                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 6 2 18 2 18 9"></polyline><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path><rect x="6" y="14" width="12" height="8"></rect></svg>
                                 <span>Laporan PDF</span>
+                            </a>
+                            <a class="report-btn is-va" href="{{ route('scans.va-report', $scan) }}" target="_blank" rel="noopener" title="Lihat dan cetak Laporan Vulnerability Assessment PDF (Matriks Pengujian & Status Aman/Rentan)">
+                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path><path d="m9 12 2 2 4-4"></path></svg>
+                                <span>Vuln Report PDF</span>
                             </a>
                         @endif
                     </div>

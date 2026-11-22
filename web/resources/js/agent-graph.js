@@ -612,35 +612,30 @@ export function startScanWorkspace(root) {
     const updateArtifacts = (list) => {
         const container = get('scan-artifacts');
         container.replaceChildren();
-        const allowed = new Set(['penetration_test_report.md', 'vulnerabilities.json']);
-        let renderedPdf = false;
-        for (const name of list) {
-            if (!allowed.has(name)) continue;
-            const link = make('a', 'report-btn', name);
-            link.href = `${location.pathname}/artifacts/${encodeURIComponent(name)}`;
-            link.insertAdjacentHTML('afterbegin', '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>');
-            container.append(link);
+        const reportTriggers = new Set(['penetration_test_report.md', 'vulnerabilities.json', 'coverage.json']);
+        const hasReportArtifact = Array.isArray(list) && list.some((name) => reportTriggers.has(name));
+        const hasTerminalStatus = ['completed', 'stopped', 'interrupted', 'failed'].includes(status);
+        const hasFindings = get('findings').children.length > 0 && !get('findings').querySelector('.findings-empty');
 
-            if (name === 'vulnerabilities.json') {
-                const pdfLink = make('a', 'report-btn is-pdf', 'Laporan PDF');
-                pdfLink.href = `${location.pathname}/report`;
-                pdfLink.target = '_blank';
-                pdfLink.rel = 'noopener';
-                pdfLink.title = 'Lihat dan cetak Laporan PDF (Standar HackerOne / PTES)';
-                pdfLink.insertAdjacentHTML('afterbegin', '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 6 2 18 2 18 9"></polyline><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path><rect x="6" y="14" width="12" height="8"></rect></svg>');
-                container.append(pdfLink);
-                renderedPdf = true;
-            }
+        if (!hasReportArtifact && !hasTerminalStatus && !hasFindings) {
+            return;
         }
-        if (!renderedPdf && ['completed', 'stopped'].includes(status)) {
-            const pdfLink = make('a', 'report-btn is-pdf', 'Laporan PDF');
-            pdfLink.href = `${location.pathname}/report`;
-            pdfLink.target = '_blank';
-            pdfLink.rel = 'noopener';
-            pdfLink.title = 'Lihat dan cetak Laporan PDF (Standar HackerOne / PTES)';
-            pdfLink.insertAdjacentHTML('afterbegin', '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 6 2 18 2 18 9"></polyline><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path><rect x="6" y="14" width="12" height="8"></rect></svg>');
-            container.append(pdfLink);
-        }
+
+        const pdfLink = make('a', 'report-btn is-pdf', 'Laporan PDF');
+        pdfLink.href = `${location.pathname}/report`;
+        pdfLink.target = '_blank';
+        pdfLink.rel = 'noopener';
+        pdfLink.title = 'Lihat dan cetak Laporan Pentest PDF (Standar HackerOne / PTES)';
+        pdfLink.insertAdjacentHTML('afterbegin', '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 6 2 18 2 18 9"></polyline><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path><rect x="6" y="14" width="12" height="8"></rect></svg>');
+        container.append(pdfLink);
+
+        const vaLink = make('a', 'report-btn is-va', 'Vuln Report PDF');
+        vaLink.href = `${location.pathname}/va-report`;
+        vaLink.target = '_blank';
+        vaLink.rel = 'noopener';
+        vaLink.title = 'Lihat dan cetak Laporan Vulnerability Assessment PDF (Matriks Pengujian & Status Aman/Rentan)';
+        vaLink.insertAdjacentHTML('afterbegin', '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path><path d="m9 12 2 2 4-4"></path></svg>');
+        container.append(vaLink);
     };
     const updateFindings = (list) => {
         get('finding-count').textContent = String(list.length);

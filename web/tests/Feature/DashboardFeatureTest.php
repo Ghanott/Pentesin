@@ -438,9 +438,12 @@ class DashboardFeatureTest extends TestCase
         ]);
 
         $response = $this->actingAs($user)->get(route('scans.show', $scan))->assertOk();
-        $response->assertSee('vulnerabilities.json');
+        $response->assertDontSee('penetration_test_report.md');
+        $response->assertDontSee('vulnerabilities.json');
         $response->assertSee('Laporan PDF');
+        $response->assertSee('Vuln Report PDF');
         $response->assertSee(route('scans.report', $scan));
+        $response->assertSee(route('scans.va-report', $scan));
     }
 
     public function test_scan_detail_displays_context_mode_and_smart_recon_meta_chips(): void

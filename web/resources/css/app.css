@@ -1171,6 +1171,8 @@
 .report-btn:hover svg{opacity:1}
 .report-btn.is-pdf{color:#53d4c3;border-color:rgba(83,212,195,.35);background:rgba(83,212,195,.06)}
 .report-btn.is-pdf:hover{color:#ffffff;border-color:#53d4c3;background:rgba(83,212,195,.15);box-shadow:0 0 10px rgba(83,212,195,.2)}
+.report-btn.is-va{color:#7dd3fc;border-color:rgba(56,189,248,.35);background:rgba(56,189,248,.07)}
+.report-btn.is-va:hover{color:#ffffff;border-color:#38bdf8;background:rgba(56,189,248,.16);box-shadow:0 0 10px rgba(56,189,248,.22)}
 
 .token-usage-badge{display:inline-flex;align-items:center;gap:8px;height:28px;padding:0 10px;border-radius:6px;background:rgba(250,178,25,.06);border:1px solid rgba(250,178,25,.24);color:#fbd38d;font-family:var(--mono);font-size:11px;line-height:16px;white-space:nowrap;user-select:none;cursor:pointer;transition:all .15s ease}
 .token-usage-badge:hover{border-color:rgba(250,178,25,.5);background:rgba(250,178,25,.12);box-shadow:0 0 12px rgba(250,178,25,.18);transform:translateY(-1px)}
