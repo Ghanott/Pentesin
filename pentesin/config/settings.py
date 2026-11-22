@@ -211,6 +211,17 @@ class ContextSettings(BaseSettings):
         alias="PENTESIN_UNTRUSTED_OUTPUT_BOUNDARY",
         validation_alias=_pentesin_alias("UNTRUSTED_OUTPUT_BOUNDARY"),
     )
+    tool_rag: bool = Field(
+        default=False,
+        alias="PENTESIN_CONTEXT_TOOL_RAG",
+        validation_alias=_pentesin_alias("CONTEXT_TOOL_RAG"),
+    )
+    tool_rag_top_k: int = Field(
+        default=12,
+        gt=0,
+        alias="PENTESIN_CONTEXT_TOOL_RAG_TOPK",
+        validation_alias=_pentesin_alias("CONTEXT_TOOL_RAG_TOPK"),
+    )
 
 
 class RuntimeSettings(BaseSettings):

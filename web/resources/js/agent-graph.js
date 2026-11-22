@@ -613,11 +613,12 @@ export function startScanWorkspace(root) {
         const container = get('scan-artifacts');
         container.replaceChildren();
         const reportTriggers = new Set(['penetration_test_report.md', 'vulnerabilities.json', 'coverage.json']);
+        const isActiveScan = ['queued', 'running'].includes(status);
         const hasReportArtifact = Array.isArray(list) && list.some((name) => reportTriggers.has(name));
         const hasTerminalStatus = ['completed', 'stopped', 'interrupted', 'failed'].includes(status);
-        const hasFindings = get('findings').children.length > 0 && !get('findings').querySelector('.findings-empty');
+        const hasFindings = Boolean(get('findings').querySelector('.finding-card'));
 
-        if (!hasReportArtifact && !hasTerminalStatus && !hasFindings) {
+        if (isActiveScan || (!hasReportArtifact && !hasTerminalStatus && !hasFindings)) {
             return;
         }
 

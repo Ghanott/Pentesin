@@ -167,10 +167,7 @@ build that cannot run in the sandbox), a static-only finding is still
 reportable — at `confidence: medium` or `low`, with the missing runtime
 proof named explicitly in `confidence_rationale`.
 
-What is **not** acceptable is a scanner hit with no trace, a "this
-pattern is usually dangerous" claim, or a finding where you never
-identified the attacker-controlled input. Those are not proof gaps, they
-are non-findings.
+What is **not** acceptable is a scanner hit with no trace, a pure **version/CVE match without live reproduction**, a "this pattern is usually dangerous" claim, or a finding where you never identified the attacker-controlled input. Treating a version banner or CVE database lookup as proof without triggering the behavior is a classic false positive. If a route is genuinely blocked after trying alternate encodings/methods/paths, record the blocker clearly and reopen it only when new mechanics appear.
 
 If you are unsure whether a candidate clears this bar: it clears it if
 you can name the input, the path, the missing or broken control, and the

@@ -28,9 +28,12 @@
             <div class="detail-head-actions">
                 <div class="actions-main-row">
                     @php
-                        $hasReportButtons = count(array_intersect($artifacts, ['penetration_test_report.md', 'vulnerabilities.json', 'coverage.json'])) > 0
+                        $isScanActive = in_array($scan->status, ['queued', 'running'], true);
+                        $hasReportButtons = ! $isScanActive && (
+                            count(array_intersect($artifacts, ['penetration_test_report.md', 'vulnerabilities.json', 'coverage.json'])) > 0
                             || count($scan->findings ?? []) > 0
-                            || in_array($scan->status, ['completed', 'stopped', 'interrupted', 'failed'], true);
+                            || in_array($scan->status, ['completed', 'stopped', 'interrupted', 'failed'], true)
+                        );
                     @endphp
                     <div id="scan-artifacts" class="report-row" aria-label="Laporan pemindaian">
                         @if($hasReportButtons)

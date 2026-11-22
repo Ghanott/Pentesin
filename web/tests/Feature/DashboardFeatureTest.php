@@ -245,10 +245,17 @@ class DashboardFeatureTest extends TestCase
         $show->assertSee('Klik untuk menyalin');
         $show->assertSee('actions-sub-row');
         $show->assertSee('actions-main-row');
-        $show->assertSee('report-btn is-pdf', false);
+        $show->assertDontSee('report-btn is-pdf', false);
+        $show->assertDontSee('Laporan PDF');
+        $show->assertDontSee('Vuln Report PDF');
+
+        $scan->update(['status' => 'completed']);
+        $completedShow = $this->actingAs($user)->get(route('scans.show', $scan))->assertOk();
+        $completedShow->assertSee('report-btn is-pdf', false);
+        $completedShow->assertSee('report-btn is-va', false);
         $this->assertGreaterThan(
-            strpos($show->getContent(), 'Laporan PDF'),
-            strpos($show->getContent(), 'actions-sub-row'),
+            strpos($completedShow->getContent(), 'Laporan PDF'),
+            strpos($completedShow->getContent(), 'actions-sub-row'),
             'Token breakdown row should render after the PDF report button.'
         );
     }
@@ -444,6 +451,23 @@ class DashboardFeatureTest extends TestCase
         $response->assertSee('Vuln Report PDF');
         $response->assertSee(route('scans.report', $scan));
         $response->assertSee(route('scans.va-report', $scan));
+
+        foreach (['queued', 'running'] as $activeStatus) {
+            $activeScan = Scan::create([
+                'user_id' => $user->id,
+                'kind' => 'scan',
+                'target' => 'https://active.local',
+                'mode' => 'standard',
+                'status' => $activeStatus,
+                'llm_snapshot' => [],
+                'artifacts' => ['coverage.json'],
+                'findings' => [['id' => 'vuln-1', 'title' => 'Partial Finding', 'severity' => 'low']],
+            ]);
+
+            $activeResponse = $this->actingAs($user)->get(route('scans.show', $activeScan))->assertOk();
+            $activeResponse->assertDontSee('Laporan PDF');
+            $activeResponse->assertDontSee('Vuln Report PDF');
+        }
     }
 
     public function test_scan_detail_displays_context_mode_and_smart_recon_meta_chips(): void

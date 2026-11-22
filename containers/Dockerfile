@@ -17,7 +17,8 @@ RUN mkdir -p /out/bin && \
     go install -v github.com/projectdiscovery/cvemap/cmd/vulnx@latest && \
     go install -v github.com/jaeles-project/gospider@latest && \
     go install -v github.com/projectdiscovery/interactsh/cmd/interactsh-client@latest && \
-    go install -v golang.org/x/vuln/cmd/govulncheck@latest
+    go install -v golang.org/x/vuln/cmd/govulncheck@latest && \
+    go install -v github.com/hahwul/dalfox/v2@latest
 
 # ---------------------------------------------------------------------------
 # Runtime stage
@@ -273,6 +274,7 @@ RUN python3 -m venv /app/.venv && \
     chmod +x /home/pentester/.local/bin/jwt_tool
 
 COPY --chown=pentester:pentester pentesin/tools/proxy/caido_api.py /opt/pentesin-python/caido_api.py
+COPY --chown=pentester:pentester pentesin/recon/scripts/ /opt/pentesin-python/api_recon/
 ENV PYTHONPATH=/opt/pentesin-python
 
 # Login shells (e.g. `bash -lc`) source /etc/profile, which on Debian/Kali

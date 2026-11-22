@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import re
 from dataclasses import dataclass, field
 from typing import Any
-from urllib.parse import parse_qsl, urlsplit
+from urllib.parse import parse_qsl, urlsplit, urlunsplit
 
 
 # Non-exploitable media/binary extensions that can safely be filtered out from DAST testing.
@@ -397,36 +398,90 @@ def _parse_single_json_scanner(stripped: str) -> str | None:
     )
 
 
-def _parse_jsonl_scanner(stripped: str) -> str | None:
-    nuclei_hits: list[str] = []
-    httpx_hosts: list[str] = []
-    for raw_line in stripped.splitlines():
-        line = raw_line.strip()
-        if not (line.startswith("{") and line.endswith("}")):
-            continue
-        try:
-            rec = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if not isinstance(rec, dict):
-            continue
-        if "template-id" in rec:
-            tid = str(rec.get("template-id") or "unknown")
-            raw_info = rec.get("info")
-            info: dict[str, Any] = raw_info if isinstance(raw_info, dict) else {}
-            sev = str(info.get("severity") or "info").upper()
-            matched = str(rec.get("matched-at") or rec.get("host") or "")
-            name = _quote_inert(info.get("name") or tid)
-            nuclei_hits.append(f"- [{sev}] `{tid}` at `{matched}` (name={name})")
-        elif "status_code" in rec and ("url" in rec or "input" in rec):
-            url = str(rec.get("url") or rec.get("input") or "")
-            sc = rec.get("status_code")
-            title = _quote_inert(rec.get("title") or "") if rec.get("title") else ""
-            tech = rec.get("tech") if isinstance(rec.get("tech"), list) else []
-            tech_str = f" tech={','.join(str(t) for t in tech[:8])}" if tech else ""
-            title_str = f" title={title}" if title else ""
-            httpx_hosts.append(f"- `{url}` [{sc}]{tech_str}{title_str}")
+_BBOT_TOKEN_RE = re.compile(r"^[A-Za-z0-9_.>-]{1,128}$")
+_BBOT_HOST_RE = re.compile(r"^[a-z0-9_.-]{1,253}$")
 
+
+def _clean_bbot_host(raw: Any) -> str:
+    host = str(raw or "").strip().lower().rstrip(".")
+    if not host:
+        return ""
+    try:
+        return str(ipaddress.ip_address(host))
+    except ValueError:
+        return host if _BBOT_HOST_RE.match(host) else ""
+
+
+def _clean_bbot_url(raw: Any, expected_host: str) -> str:
+    text = str(raw or "").strip()
+    if not text or not expected_host:
+        return ""
+    try:
+        parsed = urlsplit(text)
+    except ValueError:
+        return ""
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        return ""
+    if parsed.hostname.lower().rstrip(".") != expected_host:
+        return ""
+    # Strip embedded credentials cleanly.
+    netloc = parsed.hostname
+    if parsed.port is not None:
+        netloc = f"{netloc}:{parsed.port}"
+    return urlunsplit((parsed.scheme, netloc, parsed.path, parsed.query, parsed.fragment))
+
+
+def _format_bbot_record(rec: dict[str, Any]) -> tuple[bool, str] | None:
+    """Format one typed bbot JSONL record, separating scope_distance == 0 vs external intel."""
+    raw_type = str(rec.get("type") or "").strip()
+    raw_module = str(rec.get("module") or "").strip()
+    if not (_BBOT_TOKEN_RE.match(raw_type) and _BBOT_TOKEN_RE.match(raw_module)):
+        return None
+    scope_dist = rec.get("scope_distance")
+    in_scope = isinstance(scope_dist, int) and not isinstance(scope_dist, bool) and scope_dist == 0
+    host = _clean_bbot_host(rec.get("host"))
+    url = _clean_bbot_url(rec.get("url"), host)
+    port_val = rec.get("port")
+    port = port_val if isinstance(port_val, int) and 0 < port_val <= 65535 else 0
+    raw_data = rec.get("data_json") if rec.get("data_json") is not None else rec.get("data")
+    data_str = ""
+    if raw_data is not None:
+        serialized = (
+            raw_data if isinstance(raw_data, str) else json.dumps(raw_data, ensure_ascii=False)
+        )
+        data_str = f" data={_quote_inert(serialized)}"
+    target_part = url or host or "(unknown)"
+    port_part = f":{port}" if port and not url else ""
+    line = f"- [{raw_type}] `{target_part}{port_part}` via `{raw_module}`{data_str}"
+    return in_scope, line
+
+
+def _format_httpx_record(rec: dict[str, Any]) -> str:
+    url = str(rec.get("url") or rec.get("input") or "")
+    sc = rec.get("status_code")
+    title = _quote_inert(rec.get("title") or "") if rec.get("title") else ""
+    tech = rec.get("tech") if isinstance(rec.get("tech"), list) else []
+    tech_str = f" tech={','.join(str(t) for t in tech[:8])}" if tech else ""
+    title_str = f" title={title}" if title else ""
+    return f"- `{url}` [{sc}]{tech_str}{title_str}"
+
+
+def _format_nuclei_record(rec: dict[str, Any]) -> str:
+    tid = str(rec.get("template-id") or "unknown")
+    raw_info = rec.get("info")
+    info: dict[str, Any] = raw_info if isinstance(raw_info, dict) else {}
+    sev = str(info.get("severity") or "info").upper()
+    matched = str(rec.get("matched-at") or rec.get("host") or "")
+    name = _quote_inert(info.get("name") or tid)
+    return f"- [{sev}] `{tid}` at `{matched}` (name={name})"
+
+
+def _render_jsonl_summary(
+    nuclei_hits: list[str],
+    httpx_hosts: list[str],
+    bbot_in_scope: list[str],
+    bbot_intel: list[str],
+) -> str | None:
     if nuclei_hits:
         return "\n".join(
             [
@@ -443,7 +498,50 @@ def _parse_jsonl_scanner(stripped: str) -> str | None:
                 *httpx_hosts[:60],
             ]
         )
-    return None
+    if not (bbot_in_scope or bbot_intel):
+        return None
+    lines = [
+        "### [Smart Recon] BBOT Event Graph Summary",
+        f"- **In-Scope Events (`scope_distance=0`):** {len(bbot_in_scope)}",
+        f"- **External / Third-Party Intel (do NOT auto-attack):** {len(bbot_intel)}",
+    ]
+    if bbot_in_scope:
+        lines.append("\n#### In-Scope Assets & Signals:")
+        lines.extend(bbot_in_scope[:50])
+    if bbot_intel:
+        lines.append("\n#### External Intel (`scope_distance != 0` — intel only):")
+        lines.extend(bbot_intel[:20])
+    return "\n".join(lines)
+
+
+def _parse_jsonl_scanner(stripped: str) -> str | None:
+    nuclei_hits: list[str] = []
+    httpx_hosts: list[str] = []
+    bbot_in_scope: list[str] = []
+    bbot_intel: list[str] = []
+    for raw_line in stripped.splitlines():
+        line = raw_line.strip()
+        if not (line.startswith("{") and line.endswith("}")):
+            continue
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(rec, dict):
+            continue
+        if "template-id" in rec:
+            nuclei_hits.append(_format_nuclei_record(rec))
+        elif "status_code" in rec and ("url" in rec or "input" in rec):
+            httpx_hosts.append(_format_httpx_record(rec))
+        elif "type" in rec and "module" in rec and (
+            "scope_distance" in rec or "data" in rec or "data_json" in rec
+        ):
+            parsed_bbot = _format_bbot_record(rec)
+            if parsed_bbot is not None:
+                is_in_scope, formatted = parsed_bbot
+                (bbot_in_scope if is_in_scope else bbot_intel).append(formatted)
+
+    return _render_jsonl_summary(nuclei_hits, httpx_hosts, bbot_in_scope, bbot_intel)
 
 
 def parse_structured_scanner_output(text: str) -> str | None:

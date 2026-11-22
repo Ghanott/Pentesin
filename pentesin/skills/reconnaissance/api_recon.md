@@ -11,18 +11,20 @@ This is a **fast initial mapping pass** (not a cage): once the surface is mapped
 
 ## High-Value Surface Sources
 
-1. **Live Browser & Proxy Capture (`agent-browser` + Caido)**
+1. **Bundled ARTEX Static & MPA Surface Harvester (`harvest_api_surface`)**
+   - Call `harvest_api_surface(target_url="https://target.tld", mode="auto")` FIRST on modern SPAs or classic web apps:
+     - In SPA mode, it fetches the entry HTML, expands webpack & Vite runtime chunk manifests recursively, downloads reachable chunks, and writes `api_static.txt`, `routes.txt`, `paths_other.txt`, and `route_map.json`.
+     - If SPA JS extraction yields sparse routes, `mode="auto"` (or `mode="mpa"`) automatically crawls HTML forms, links, and inline-JS AJAX URLs into `forms.txt` and `api_inline.txt` (pass `cookie="..."` for authenticated MPA coverage).
+2. **Live Browser & Proxy Capture (`agent-browser` + Caido)**
    - Navigate public and authenticated views with `agent-browser --session <name>` so all XHR, `fetch()`, GraphQL, and WebSocket handshakes land in Caido (`list_requests`, `list_sitemap`).
    - Trigger UI state transitions: tabs, filters, pagination, edit modals, delete buttons, export/download actions, and settings pages.
-2. **JavaScript Bundle & Source Map Mining**
-   - Extract `.js` and `.js.map` URLs via `katana` / `gospider` / `list_sitemap`.
-   - Run `JS-Snooper`, `jsniper.sh`, `js-beautify`, or targeted regex/Python scripts to harvest:
-     - Relative/absolute API paths (`/api/v1/...`, `/api/v2/...`, `/internal/...`, `/admin/...`, `/graphql`)
+3. **JavaScript Bundle & Source Map Mining**
+   - Complement `harvest_api_surface` with `.js.map` / runtime extraction (`katana -jc` / `gospider`) for:
      - Undocumented query/JSON fields (`isAdmin`, `role`, `tenantId`, `debug`, `include`)
      - Alternate API versions, feature flags, and client-side role checks
-3. **API Schema & Spec Probing**
+4. **API Schema & Spec Probing**
    - Check `/openapi.json`, `/swagger.json`, `/v3/api-docs`, `/api-docs`, `/swagger-ui/`, `/graphql`, `/graphiql`, `/robots.txt`, and `/.well-known/*`.
-4. **Hidden Parameter Discovery**
+5. **Hidden Parameter Discovery**
    - Use `arjun` against high-priority API endpoints to uncover hidden query/JSON parameters not shown in the UI.
    - Use `ffuf` with targeted API wordlists for undocumented sibling routes (`/users`, `/export`, `/impersonate`, `/bulk`, `/debug`).
 

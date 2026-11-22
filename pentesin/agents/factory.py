@@ -18,6 +18,7 @@ from agents.tool import CustomTool, FunctionTool, Tool
 from pydantic import ValidationError
 
 from pentesin.agents.prompt import render_system_prompt
+from pentesin.agents.toolrag import project_tools
 from pentesin.config import load_settings
 from pentesin.config.tool_call_arguments import describe_malformed_arguments
 from pentesin.tools.agents_graph.tools import (
@@ -57,7 +58,7 @@ from pentesin.tools.proxy.tools import (
     view_request,
     view_sitemap_entry,
 )
-from pentesin.tools.recon import triage_recon_data
+from pentesin.tools.recon import harvest_api_surface, triage_recon_data
 from pentesin.tools.reporting.tool import (
     create_dependency_report,
     create_vulnerability_report,
@@ -150,6 +151,9 @@ _UNTRUSTED_OUTPUT_TOOLS: frozenset[str] = frozenset(
         "repeat_request",
         "web_search",
         "web_get_contents",
+        "xray_scan",
+        "triage_recon_data",
+        "harvest_api_surface",
     }
 )
 
@@ -669,6 +673,7 @@ _BASE_TOOLS: tuple[Tool, ...] = (
     web_get_contents,
     xray_scan,
     triage_recon_data,
+    harvest_api_surface,
     create_vulnerability_report,
     create_dependency_report,
     update_vulnerability_report,
@@ -754,6 +759,7 @@ def build_pentesin_agent(
     instructions_override: str | None = None,
     supports_images: bool = True,
     finish_tool: Tool = finish_scan,
+    tool_rag_query: str | None = None,
 ) -> SandboxAgent[Any]:
     """Build a SandboxAgent for either root or child use.
 
@@ -784,6 +790,7 @@ def build_pentesin_agent(
 
     web_search_ready = is_web_search_configured()
     web_fetch_ready = is_web_get_contents_configured()
+    settings = load_settings()
     active_base_tools = [
         tool
         for tool in _BASE_TOOLS
@@ -798,6 +805,13 @@ def build_pentesin_agent(
         tools: list[Tool] = [*active_base_tools, *agent_tools, finish_tool]
     else:
         tools = [*active_base_tools, *agent_tools, agent_finish]
+        if settings.context.tool_rag:
+            rag_query = tool_rag_query or f"{name} {' '.join(skills or ())}"
+            tools, _projected = project_tools(
+                rag_query,
+                tools,
+                top_k=settings.context.tool_rag_top_k,
+            )
     _ensure_unique_tool_names(tools)
     tools = [
         _with_bounded_result(_with_strictness(_with_coerced_arguments(tool), strict_tool_schemas))
@@ -871,6 +885,7 @@ def make_child_factory(
             strict_tool_schemas=strict_tool_schemas,
             system_prompt_context=system_prompt_context,
             supports_images=supports_images,
+            tool_rag_query=f"{name} {' '.join(skills)}",
         )
 
     return _factory
