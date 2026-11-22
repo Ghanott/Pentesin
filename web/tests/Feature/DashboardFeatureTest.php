@@ -556,6 +556,57 @@ class DashboardFeatureTest extends TestCase
             ->assertJson(['state' => 'failed', 'success' => false]);
     }
 
+    public function test_report_synthesis_handles_sse_stream_chunks_and_exposes_completed_keys_for_resume(): void
+    {
+        Storage::fake('local');
+        $user = User::factory()->create();
+        $profile = LlmProfile::create([
+            'user_id' => $user->id,
+            'name' => 'Stream Writer',
+            'model' => 'openai/stream-model',
+            'api_base' => 'https://stream.example/v1',
+            'api_type' => 'chat_completions',
+            'api_key' => 'stream-key',
+        ]);
+        $scan = Scan::create([
+            'user_id' => $user->id,
+            'kind' => 'scan',
+            'target' => 'https://lab.example',
+            'mode' => 'standard',
+            'status' => 'completed',
+            'llm_profile_id' => $profile->id,
+            'llm_snapshot' => $profile->runnerProfile(),
+            'artifacts' => [],
+            'findings' => [
+                ['id' => 'finding-1', 'title' => 'First', 'severity' => 'high'],
+                ['id' => 'finding-2', 'title' => 'Second', 'severity' => 'medium'],
+            ],
+        ]);
+
+        $jsonPayload = json_encode(['findings' => [[
+            'finding_id' => 'finding-1',
+            'id' => ['title' => 'Stream ID', 'description' => 'Desc SSE', 'impact' => 'Imp', 'technical_analysis' => 'Tech', 'remediation' => 'Fix'],
+        ]]]);
+        $half = (int) floor(strlen($jsonPayload) / 2);
+        $sseBody = 'data: '.json_encode(['choices' => [['delta' => ['content' => substr($jsonPayload, 0, $half)]]]])."\n\n"
+            .'data: '.json_encode(['choices' => [['delta' => ['content' => substr($jsonPayload, $half)], 'finish_reason' => 'stop']]])."\n\n"
+            ."data: [DONE]\n\n";
+
+        Http::fake([
+            'https://stream.example/*' => Http::response($sseBody, 200, ['Content-Type' => 'text/event-stream']),
+        ]);
+
+        $this->actingAs($user)
+            ->postJson(route('scans.report.synthesize', $scan), ['finding_ids' => ['finding-1'], 'language' => 'id'])
+            ->assertOk()
+            ->assertJson(['success' => true, 'count' => 1]);
+
+        $reportRes = $this->actingAs($user)
+            ->get(route('scans.report', [$scan, 'lang' => 'id']))
+            ->assertOk();
+        $reportRes->assertSee('finding-1:id', false);
+    }
+
     public function test_user_can_view_scan_report_in_id_and_en(): void
     {
         $user = User::factory()->create();

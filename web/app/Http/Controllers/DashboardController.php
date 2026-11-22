@@ -196,6 +196,7 @@ class DashboardController extends Controller
 
         $narrativesPath = "pentesin_runs/web-{$scan->id}/report_narratives.json";
         $hasAiReport = false;
+        $synthCompletedKeys = [];
         if (Storage::disk('local')->exists($narrativesPath)) {
             $narrativesData = json_decode(Storage::disk('local')->get($narrativesPath), true);
             if (is_array($narrativesData) && ! empty($narrativesData['findings'])) {
@@ -210,6 +211,15 @@ class DashboardController extends Controller
                     }
                     if ($key) {
                         $mapped[$key] = $item;
+                        foreach (['id', 'en'] as $langKey) {
+                            if (
+                                is_array($item[$langKey] ?? null)
+                                && trim((string) ($item[$langKey]['title'] ?? '')) !== ''
+                                && trim((string) ($item[$langKey]['description'] ?? '')) !== ''
+                            ) {
+                                $synthCompletedKeys["{$key}:{$langKey}"] = true;
+                            }
+                        }
                     }
                     $mapped["idx_{$idx}"] = $item;
                 }
@@ -255,6 +265,7 @@ class DashboardController extends Controller
             'findings' => $findings,
             'lang' => $lang,
             'hasAiReport' => $hasAiReport,
+            'synthCompletedKeys' => $synthCompletedKeys,
         ]);
     }
 
@@ -496,7 +507,7 @@ class DashboardController extends Controller
 
         if (($status['state'] ?? null) === 'running' && ! empty($status['started_at'])) {
             $startedAt = strtotime((string) $status['started_at']);
-            if ($startedAt !== false && (time() - $startedAt) > 300) {
+            if ($startedAt !== false && (time() - $startedAt) > 420) {
                 $timeoutPayload = [
                     'job_key' => $status['job_key'] ?? $expectedKey,
                     'state' => 'failed',
@@ -518,6 +529,9 @@ class DashboardController extends Controller
      */
     public function runAsyncSynthesisStep(string $scanId, string $findingId, string $language, ?int $profileId = null): void
     {
+        @ini_set('max_execution_time', '420');
+        @set_time_limit(420);
+
         $jobKey = "{$findingId}:{$language}";
         $scan = Scan::find($scanId);
         if (! $scan) {
@@ -827,6 +841,7 @@ class DashboardController extends Controller
         }
 
         $lastFailure = ['ok' => false, 'error' => "Gagal membuat narasi {$languageName}.", 'status' => 502];
+        $attemptErrors = [];
 
         foreach ($orderedIndexes as $idx) {
             $result = $this->requestSynthesisBatch($batch, $language, $languageName, $candidates[$idx], $verifySsl);
@@ -838,6 +853,8 @@ class DashboardController extends Controller
                 ];
             }
             $lastFailure = $result;
+            $host = parse_url($candidates[$idx]['endpoint'], PHP_URL_HOST) ?: $candidates[$idx]['endpoint'];
+            $attemptErrors[] = "[{$host}] ".$result['error'];
         }
 
         if (count($batch) > 1) {
@@ -864,6 +881,10 @@ class DashboardController extends Controller
                 'narratives' => $splitNarratives,
                 'candidate_index' => $workingIdx,
             ];
+        }
+
+        if (count($attemptErrors) > 1) {
+            $lastFailure['error'] = implode(' | ', $attemptErrors);
         }
 
         return $lastFailure;
@@ -905,8 +926,8 @@ class DashboardController extends Controller
             ]],
         ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
 
-        $timeoutSeconds = count($batch) === 1 ? 85 : 120;
-        $client = Http::timeout($timeoutSeconds)->acceptJson()->withOptions(['verify' => $verifySsl]);
+        $timeoutSeconds = count($batch) === 1 ? 180 : 150;
+        $client = Http::timeout($timeoutSeconds)->connectTimeout(10)->acceptJson()->withOptions(['verify' => $verifySsl]);
         if (filled($candidate['api_key'] ?? null)) {
             $client = $client->withToken((string) $candidate['api_key']);
         }
@@ -914,6 +935,7 @@ class DashboardController extends Controller
         try {
             $requestBody = [
                 'model' => $candidate['model'],
+                'stream' => true,
                 'reasoning_effort' => 'low',
                 'messages' => [
                     ['role' => 'system', 'content' => 'You are an expert security report synthesizer. Output strictly valid JSON without code fences or surrounding commentary.'],
@@ -925,8 +947,16 @@ class DashboardController extends Controller
             $res = $client->post($candidate['endpoint'], $requestBody);
             if ($res->status() === 400 || $res->status() === 422) {
                 $errLower = strtolower((string) $res->body());
-                if (str_contains($errLower, 'reasoning_effort') || str_contains($errLower, 'unsupported') || str_contains($errLower, 'unknown')) {
+                $retried = false;
+                if (isset($requestBody['reasoning_effort']) && (str_contains($errLower, 'reasoning_effort') || str_contains($errLower, 'unsupported') || str_contains($errLower, 'unknown'))) {
                     unset($requestBody['reasoning_effort']);
+                    $retried = true;
+                }
+                if (isset($requestBody['stream']) && (str_contains($errLower, 'stream') || str_contains($errLower, 'unsupported') || str_contains($errLower, 'unknown'))) {
+                    unset($requestBody['stream']);
+                    $retried = true;
+                }
+                if ($retried) {
                     $res = $client->post($candidate['endpoint'], $requestBody);
                 }
             }
@@ -937,14 +967,14 @@ class DashboardController extends Controller
                 return ['ok' => false, 'error' => "Gagal membuat narasi {$languageName}: ".$err, 'status' => 502];
             }
 
-            $payloadJson = $res->json();
-            $rawContent = (string) (data_get($payloadJson, 'choices.0.message.content') ?? '');
+            $extracted = $this->extractCompletionPayload((string) $res->body(), $res->json());
+            $rawContent = $extracted['content'];
             if (trim($rawContent) === '') {
-                $reasoning = (string) (data_get($payloadJson, 'choices.0.message.reasoning_content') ?? '');
+                $reasoning = $extracted['reasoning'];
                 if (str_contains($reasoning, '{') && str_contains($reasoning, '"title"')) {
                     $rawContent = $reasoning;
                 } else {
-                    $finishReason = (string) (data_get($payloadJson, 'choices.0.finish_reason') ?? '');
+                    $finishReason = $extracted['finish_reason'];
                     $hint = $finishReason === 'length'
                         ? 'Model kehabisan token reasoning sebelum menulis output JSON.'
                         : 'Respons model kosong.';
@@ -1017,6 +1047,59 @@ class DashboardController extends Controller
         } catch (\Throwable $e) {
             return ['ok' => false, 'error' => "Kesalahan saat sintesis {$languageName}: ".$e->getMessage(), 'status' => 500];
         }
+    }
+
+    /**
+     * Extract content/reasoning/finish_reason from either JSON or OpenAI SSE data chunks.
+     *
+     * @return array{content: string, reasoning: string, finish_reason: string}
+     */
+    private function extractCompletionPayload(string $rawBody, mixed $jsonBody): array
+    {
+        if (is_array($jsonBody) && isset($jsonBody['choices'][0])) {
+            return [
+                'content' => (string) (data_get($jsonBody, 'choices.0.message.content') ?? ''),
+                'reasoning' => (string) (data_get($jsonBody, 'choices.0.message.reasoning_content') ?? ''),
+                'finish_reason' => (string) (data_get($jsonBody, 'choices.0.finish_reason') ?? ''),
+            ];
+        }
+
+        $contentParts = [];
+        $reasoningParts = [];
+        $finishReason = '';
+
+        foreach (preg_split('/\r?\n/', $rawBody) ?: [] as $line) {
+            $line = trim($line);
+            if (! str_starts_with($line, 'data:')) {
+                continue;
+            }
+            $data = trim(substr($line, 5));
+            if ($data === '' || $data === '[DONE]') {
+                continue;
+            }
+            $chunk = json_decode($data, true);
+            if (! is_array($chunk)) {
+                continue;
+            }
+            $deltaContent = data_get($chunk, 'choices.0.delta.content') ?? data_get($chunk, 'choices.0.message.content');
+            if (is_string($deltaContent) && $deltaContent !== '') {
+                $contentParts[] = $deltaContent;
+            }
+            $deltaReasoning = data_get($chunk, 'choices.0.delta.reasoning_content') ?? data_get($chunk, 'choices.0.message.reasoning_content');
+            if (is_string($deltaReasoning) && $deltaReasoning !== '') {
+                $reasoningParts[] = $deltaReasoning;
+            }
+            $chunkFinish = data_get($chunk, 'choices.0.finish_reason');
+            if (is_string($chunkFinish) && $chunkFinish !== '') {
+                $finishReason = $chunkFinish;
+            }
+        }
+
+        return [
+            'content' => implode('', $contentParts),
+            'reasoning' => implode('', $reasoningParts),
+            'finish_reason' => $finishReason,
+        ];
     }
 
     /**

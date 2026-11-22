@@ -1669,6 +1669,7 @@
         const step2 = document.getElementById('step-2');
         const step3 = document.getElementById('step-3');
         const synthTargets = @json($synthTargets);
+        const synthCompletedKeys = @json($synthCompletedKeys ?? []);
 
         function setStepDone(stepEl) {
             stepEl.classList.remove('is-active');
@@ -1711,7 +1712,7 @@
                 const statusBase = '{{ route("scans.report.synthesize.status", $scan) }}';
                 const statusUrl = `${statusBase}?finding_id=${encodeURIComponent(findingId)}&language=${encodeURIComponent(language)}`;
                 const startedAt = Date.now();
-                const maxWaitMs = 260000;
+                const maxWaitMs = 420000;
 
                 while (Date.now() - startedAt < maxWaitMs) {
                     await new Promise((resolve) => setTimeout(resolve, 2500));
@@ -1758,10 +1759,10 @@
                     if (synthTargets.length === 0) {
                         await runSynthesisStep(null, null, '');
                     } else {
-                        const jobs = [];
+                        const allJobs = [];
                         for (const lang of ['id', 'en']) {
                             for (let i = 0; i < synthTargets.length; i++) {
-                                jobs.push({
+                                allJobs.push({
                                     findingId: synthTargets[i].id,
                                     title: synthTargets[i].title,
                                     lang,
@@ -1771,10 +1772,16 @@
                             }
                         }
 
+                        const missingJobs = allJobs.filter((job) => !synthCompletedKeys[`${job.findingId}:${job.lang}`]);
+                        const jobs = (missingJobs.length > 0 && missingJobs.length < allJobs.length)
+                            ? missingJobs
+                            : allJobs;
+                        const skippedCount = allJobs.length - jobs.length;
+
                         for (let idx = 0; idx < jobs.length; idx++) {
                             const job = jobs[idx];
                             const langLabel = job.lang === 'id' ? 'Bahasa Indonesia' : 'English';
-                            if (job.lang === 'id' && idx === Math.floor(synthTargets.length / 2)) {
+                            if (job.lang === 'id' && idx === Math.floor(jobs.length / 2)) {
                                 setStepDone(step1);
                                 setStepActive(step2);
                             } else if (job.lang === 'en' && !step2.classList.contains('is-done')) {
@@ -1783,7 +1790,8 @@
                                 setStepActive(step3);
                             }
 
-                            const baseTip = `{{ $isEn ? 'Step' : 'Tahap' }} ${idx + 1}/${jobs.length} · {{ $isEn ? 'Saved incrementally per finding' : 'Disimpan bertahap per temuan' }}`;
+                            const resumePrefix = skippedCount > 0 ? `Lanjut ${skippedCount} selesai · ` : '';
+                            const baseTip = `${resumePrefix}{{ $isEn ? 'Step' : 'Tahap' }} ${idx + 1}/${jobs.length} · {{ $isEn ? 'Saved incrementally per finding' : 'Disimpan bertahap per temuan' }}`;
                             modalSubtitle.textContent = `{{ $isEn ? 'Synthesizing finding' : 'Memparafrase temuan' }} ${job.index}/${job.totalFindings} (${langLabel}): ${job.title}`;
                             modalTip.textContent = baseTip;
 
