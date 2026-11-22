@@ -26,6 +26,7 @@ Route::middleware('auth')->group(function (): void {
     Route::get('/scans/{scan}/va-report', [DashboardController::class, 'vaReport'])->name('scans.va-report');
     Route::post('/scans/{scan}/retest/{findingId}', [DashboardController::class, 'retestFinding'])->middleware('throttle:5,1')->name('scans.retest');
     Route::post('/scans/{scan}/report/synthesize', [DashboardController::class, 'synthesizeReport'])->name('scans.report.synthesize');
+    Route::get('/scans/{scan}/report/synthesize/status', [DashboardController::class, 'synthesizeStatus'])->name('scans.report.synthesize.status');
     Route::get('/scans/{scan}/feed', [DashboardController::class, 'feed'])->name('scans.feed');
     Route::post('/scans/{scan}/messages', [DashboardController::class, 'message'])->middleware('throttle:30,1')->name('scans.messages');
     Route::post('/scans/{scan}/stop', [DashboardController::class, 'stop'])->name('scans.stop');

@@ -406,39 +406,22 @@ class DashboardController extends Controller
             'finding_ids.*' => ['string', 'max:200'],
             'language' => ['nullable', Rule::in(['id', 'en'])],
             'llm_profile_id' => ['nullable', 'integer'],
+            'async' => ['nullable', 'boolean'],
         ]);
 
-        $findings = $scan->findings ?? [];
-        if (empty($findings)) {
+        $allFindings = $this->buildPayloadFindings($scan);
+        if (empty($allFindings)) {
             return response()->json(['success' => false, 'error' => 'Tidak ada temuan kerentanan untuk diparafrase.']);
         }
 
+        $requestedProfileId = isset($validated['llm_profile_id']) ? (int) $validated['llm_profile_id'] : null;
         $candidates = $this->resolveSynthesisCandidates(
-            $request,
+            (int) $request->user()->id,
             $scan,
-            isset($validated['llm_profile_id']) ? (int) $validated['llm_profile_id'] : null,
+            $requestedProfileId,
         );
         if (empty($candidates)) {
             return response()->json(['success' => false, 'error' => 'Konfigurasi LLM tidak ditemukan. Atur profil LLM di menu Pengaturan.'], 422);
-        }
-
-        $allFindings = [];
-        foreach (array_values($findings) as $idx => $f) {
-            if (! is_array($f)) {
-                continue;
-            }
-            $allFindings[] = [
-                'id' => (string) ($f['id'] ?? 'vuln-'.$idx),
-                'title' => (string) ($f['title'] ?? ''),
-                'severity' => (string) ($f['severity'] ?? 'info'),
-                'target' => (string) ($f['target'] ?? ''),
-                'endpoint' => (string) ($f['endpoint'] ?? ''),
-                'cwe' => (string) ($f['cwe'] ?? ''),
-                'description' => $this->trimNarrativeField((string) ($f['description'] ?? ''), 1800),
-                'impact' => $this->trimNarrativeField((string) ($f['impact'] ?? ''), 1000),
-                'technical_analysis' => $this->trimNarrativeField((string) ($f['technical_analysis'] ?? ''), 1800),
-                'remediation_steps' => $this->trimNarrativeField((string) ($f['remediation_steps'] ?? ''), 1000),
-            ];
         }
 
         $requestedIds = array_values(array_unique($validated['finding_ids'] ?? []));
@@ -456,6 +439,255 @@ class DashboardController extends Controller
         $targetLanguages = isset($validated['language']) ? [$validated['language']] : ['id', 'en'];
         $isIncremental = ! empty($requestedIds) || isset($validated['language']);
 
+        if ($request->boolean('async') && count($targetFindings) === 1 && count($targetLanguages) === 1) {
+            $findingId = $targetFindings[0]['id'];
+            $language = $targetLanguages[0];
+            $jobKey = "{$findingId}:{$language}";
+
+            $this->writeSynthesisStatus($scan, [
+                'job_key' => $jobKey,
+                'state' => 'running',
+                'finding_id' => $findingId,
+                'language' => $language,
+                'started_at' => now()->toIso8601String(),
+            ]);
+
+            if (app()->runningUnitTests()) {
+                $this->runAsyncSynthesisStep((string) $scan->id, $findingId, $language, $requestedProfileId);
+            } else {
+                $this->spawnSynthesisStepProcess((string) $scan->id, $findingId, $language, $requestedProfileId);
+            }
+
+            return response()->json(['success' => true, 'pending' => true, 'job_key' => $jobKey], 202);
+        }
+
+        $outcome = $this->executeSynthesis($scan, $candidates, $targetFindings, $allFindings, $targetLanguages, $isIncremental);
+        if (! $outcome['ok']) {
+            return response()->json(['success' => false, 'error' => $outcome['error']], $outcome['status']);
+        }
+
+        return response()->json(['success' => true, 'count' => $outcome['count']]);
+    }
+
+    /**
+     * Poll status of an asynchronous single-finding synthesis step.
+     */
+    public function synthesizeStatus(Request $request, Scan $scan): JsonResponse
+    {
+        $this->expireOwnerLeases();
+        $this->ownedScan($request, $scan);
+
+        $statusPath = "pentesin_runs/web-{$scan->id}/synth_status.json";
+        if (! Storage::disk('local')->exists($statusPath)) {
+            return response()->json(['state' => 'idle']);
+        }
+
+        $status = json_decode((string) Storage::disk('local')->get($statusPath), true);
+        if (! is_array($status)) {
+            return response()->json(['state' => 'idle']);
+        }
+
+        $expectedKey = ($request->filled('finding_id') && $request->filled('language'))
+            ? $request->query('finding_id').':'.$request->query('language')
+            : null;
+        if ($expectedKey !== null && ($status['job_key'] ?? null) !== $expectedKey) {
+            return response()->json(['state' => 'idle']);
+        }
+
+        if (($status['state'] ?? null) === 'running' && ! empty($status['started_at'])) {
+            $startedAt = strtotime((string) $status['started_at']);
+            if ($startedAt !== false && (time() - $startedAt) > 300) {
+                $timeoutPayload = [
+                    'job_key' => $status['job_key'] ?? $expectedKey,
+                    'state' => 'failed',
+                    'success' => false,
+                    'error' => 'Proses sintesis di latar belakang melebihi batas waktu.',
+                    'status_code' => 504,
+                ];
+                $this->writeSynthesisStatus($scan, $timeoutPayload);
+
+                return response()->json($timeoutPayload);
+            }
+        }
+
+        return response()->json($status);
+    }
+
+    /**
+     * Execute a background synthesis step for one finding and language and record status.
+     */
+    public function runAsyncSynthesisStep(string $scanId, string $findingId, string $language, ?int $profileId = null): void
+    {
+        $jobKey = "{$findingId}:{$language}";
+        $scan = Scan::find($scanId);
+        if (! $scan) {
+            return;
+        }
+
+        try {
+            if (! in_array($language, ['id', 'en'], true)) {
+                throw new \InvalidArgumentException('Bahasa sintesis tidak valid.');
+            }
+
+            $allFindings = $this->buildPayloadFindings($scan);
+            $targetFindings = array_values(array_filter(
+                $allFindings,
+                static fn (array $item): bool => $item['id'] === $findingId,
+            ));
+            if (empty($targetFindings)) {
+                $this->writeSynthesisStatus($scan, [
+                    'job_key' => $jobKey,
+                    'state' => 'failed',
+                    'success' => false,
+                    'error' => 'Temuan yang diminta untuk diparafrase tidak ditemukan.',
+                    'status_code' => 422,
+                ]);
+
+                return;
+            }
+
+            $candidates = $this->resolveSynthesisCandidates((int) $scan->user_id, $scan, $profileId);
+            if (empty($candidates)) {
+                $this->writeSynthesisStatus($scan, [
+                    'job_key' => $jobKey,
+                    'state' => 'failed',
+                    'success' => false,
+                    'error' => 'Konfigurasi LLM tidak ditemukan. Atur profil LLM di menu Pengaturan.',
+                    'status_code' => 422,
+                ]);
+
+                return;
+            }
+
+            $outcome = $this->executeSynthesis($scan, $candidates, $targetFindings, $allFindings, [$language], true);
+            if (! $outcome['ok']) {
+                $this->writeSynthesisStatus($scan, [
+                    'job_key' => $jobKey,
+                    'state' => 'failed',
+                    'success' => false,
+                    'error' => $outcome['error'],
+                    'status_code' => $outcome['status'],
+                ]);
+
+                return;
+            }
+
+            $this->writeSynthesisStatus($scan, [
+                'job_key' => $jobKey,
+                'state' => 'completed',
+                'success' => true,
+                'count' => $outcome['count'],
+                'finished_at' => now()->toIso8601String(),
+            ]);
+        } catch (\Throwable $e) {
+            $this->writeSynthesisStatus($scan, [
+                'job_key' => $jobKey,
+                'state' => 'failed',
+                'success' => false,
+                'error' => 'Kesalahan sintesis latar belakang: '.$e->getMessage(),
+                'status_code' => 500,
+            ]);
+        }
+    }
+
+    /**
+     * Spawn detached Artisan worker process to avoid proxy timeouts during LLM synthesis.
+     */
+    private function spawnSynthesisStepProcess(string $scanId, string $findingId, string $language, ?int $profileId): void
+    {
+        $phpBin = is_executable('/usr/bin/php')
+            ? '/usr/bin/php'
+            : (is_executable(PHP_BINDIR.'/php') ? PHP_BINDIR.'/php' : 'php');
+
+        $parts = [
+            escapeshellarg($phpBin),
+            escapeshellarg(base_path('artisan')),
+            'scans:synthesize-step',
+            escapeshellarg($scanId),
+            escapeshellarg($findingId),
+            escapeshellarg($language),
+        ];
+        if ($profileId !== null) {
+            $parts[] = escapeshellarg('--profile-id='.$profileId);
+        }
+        $cmd = implode(' ', $parts);
+
+        if (PHP_OS_FAMILY === 'Windows') {
+            @pclose(@popen('start /B '.$cmd.' > NUL 2>&1', 'r'));
+
+            return;
+        }
+
+        @exec('nohup '.$cmd.' > /dev/null 2>&1 &');
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     */
+    private function writeSynthesisStatus(Scan $scan, array $payload): void
+    {
+        $statusPath = "pentesin_runs/web-{$scan->id}/synth_status.json";
+        $encoded = json_encode($payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        if ($encoded === false) {
+            return;
+        }
+        $saved = Storage::disk('local')->put($statusPath, $encoded);
+        if (! $saved) {
+            $absPath = storage_path("app/private/{$statusPath}");
+            $dir = dirname($absPath);
+            if (! is_dir($dir)) {
+                @mkdir($dir, 0775, true);
+            }
+            @file_put_contents($absPath, $encoded);
+        }
+    }
+
+    /**
+     * Normalize and trim scan findings into compact inputs for LLM synthesis.
+     *
+     * @return list<array<string, mixed>>
+     */
+    private function buildPayloadFindings(Scan $scan): array
+    {
+        $allFindings = [];
+        foreach (array_values($scan->findings ?? []) as $idx => $f) {
+            if (! is_array($f)) {
+                continue;
+            }
+            $allFindings[] = [
+                'id' => (string) ($f['id'] ?? 'vuln-'.$idx),
+                'title' => (string) ($f['title'] ?? ''),
+                'severity' => (string) ($f['severity'] ?? 'info'),
+                'target' => (string) ($f['target'] ?? ''),
+                'endpoint' => (string) ($f['endpoint'] ?? ''),
+                'cwe' => (string) ($f['cwe'] ?? ''),
+                'description' => $this->trimNarrativeField((string) ($f['description'] ?? ''), 1800),
+                'impact' => $this->trimNarrativeField((string) ($f['impact'] ?? ''), 1000),
+                'technical_analysis' => $this->trimNarrativeField((string) ($f['technical_analysis'] ?? ''), 1800),
+                'remediation_steps' => $this->trimNarrativeField((string) ($f['remediation_steps'] ?? ''), 1000),
+            ];
+        }
+
+        return $allFindings;
+    }
+
+    /**
+     * Shared synthesis runner for both synchronous HTTP calls and detached step jobs.
+     *
+     * @param  list<array{api_base: string, api_key: ?string, model: string, endpoint: string}>  $candidates
+     * @param  list<array<string, mixed>>  $targetFindings
+     * @param  list<array<string, mixed>>  $allFindings
+     * @param  list<string>  $targetLanguages
+     * @return array{ok: bool, count?: int, error?: string, status?: int}
+     */
+    private function executeSynthesis(
+        Scan $scan,
+        array $candidates,
+        array $targetFindings,
+        array $allFindings,
+        array $targetLanguages,
+        bool $isIncremental,
+    ): array {
         $caBundle = base_path('../.venv/Lib/site-packages/certifi/cacert.pem');
         $verifySsl = is_file($caBundle) ? $caBundle : false;
 
@@ -478,10 +710,7 @@ class DashboardController extends Controller
                 );
 
                 if (! $chunkResult['ok']) {
-                    return response()->json(
-                        ['success' => false, 'error' => $chunkResult['error']],
-                        $chunkResult['status'],
-                    );
+                    return $chunkResult;
                 }
 
                 $activeCandidateIndex = $chunkResult['candidate_index'];
@@ -489,16 +718,16 @@ class DashboardController extends Controller
             }
 
             if (count($languageNarratives[$language]) !== count($expectedIds)) {
-                return response()->json(['success' => false, 'error' => "Sintesis {$languageName} tidak mencakup seluruh temuan."], 502);
+                return ['ok' => false, 'error' => "Sintesis {$languageName} tidak mencakup seluruh temuan.", 'status' => 502];
             }
         }
 
         $savedCount = $this->persistSynthesisNarratives($scan, $allFindings, $languageNarratives, $isIncremental);
         if ($savedCount === null) {
-            return response()->json(['success' => false, 'error' => 'Gagal menyimpan hasil parafrase.'], 500);
+            return ['ok' => false, 'error' => 'Gagal menyimpan hasil parafrase.', 'status' => 500];
         }
 
-        return response()->json(['success' => true, 'count' => $savedCount]);
+        return ['ok' => true, 'count' => $savedCount];
     }
 
     /**
@@ -506,12 +735,12 @@ class DashboardController extends Controller
      *
      * @return list<array{api_base: string, api_key: ?string, model: string, endpoint: string}>
      */
-    private function resolveSynthesisCandidates(Request $request, Scan $scan, ?int $requestedProfileId): array
+    private function resolveSynthesisCandidates(int $userId, Scan $scan, ?int $requestedProfileId): array
     {
         $rawCandidates = [];
 
         if ($requestedProfileId !== null) {
-            $explicit = LlmProfile::where('user_id', $request->user()->id)->find($requestedProfileId);
+            $explicit = LlmProfile::where('user_id', $userId)->find($requestedProfileId);
             if ($explicit) {
                 $rawCandidates[] = [
                     'api_base' => $explicit->api_base,
@@ -531,7 +760,7 @@ class DashboardController extends Controller
         }
 
         if ($scan->llm_profile_id) {
-            $scanProfile = LlmProfile::where('user_id', $request->user()->id)->find($scan->llm_profile_id);
+            $scanProfile = LlmProfile::where('user_id', $userId)->find($scan->llm_profile_id);
             if ($scanProfile) {
                 $rawCandidates[] = [
                     'api_base' => $scanProfile->api_base,
@@ -541,7 +770,7 @@ class DashboardController extends Controller
             }
         }
 
-        foreach (LlmProfile::where('user_id', $request->user()->id)->orderBy('id')->get() as $profile) {
+        foreach (LlmProfile::where('user_id', $userId)->orderBy('id')->get() as $profile) {
             $rawCandidates[] = [
                 'api_base' => $profile->api_base,
                 'api_key' => $profile->api_key,

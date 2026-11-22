@@ -505,6 +505,57 @@ class DashboardFeatureTest extends TestCase
         $this->assertSame('Langkah ID', $stored['findings'][0]['id']['remediation']);
     }
 
+    public function test_report_synthesis_async_mode_returns_202_and_status_endpoint_reports_completion_and_failure(): void
+    {
+        Storage::fake('local');
+        $user = User::factory()->create();
+        $profile = LlmProfile::create([
+            'user_id' => $user->id,
+            'name' => 'Async Writer',
+            'model' => 'openai/async-model',
+            'api_base' => 'https://async.example/v1',
+            'api_type' => 'chat_completions',
+            'api_key' => 'async-key',
+        ]);
+        $scan = Scan::create([
+            'user_id' => $user->id,
+            'kind' => 'scan',
+            'target' => 'https://lab.example',
+            'mode' => 'standard',
+            'status' => 'completed',
+            'llm_profile_id' => $profile->id,
+            'llm_snapshot' => $profile->runnerProfile(),
+            'artifacts' => [],
+            'findings' => [['id' => 'finding-1', 'title' => 'Async Finding', 'severity' => 'high']],
+        ]);
+
+        Http::fakeSequence()
+            ->push(['choices' => [['message' => ['content' => json_encode(['findings' => [[
+                'finding_id' => 'finding-1',
+                'id' => ['title' => 'Async ID', 'description' => 'Desc', 'impact' => 'Imp', 'technical_analysis' => 'Tech', 'remediation' => 'Fix'],
+            ]]])]]]], 200)
+            ->push(['error' => ['message' => 'Upstream down']], 502);
+
+        $this->actingAs($user)
+            ->postJson(route('scans.report.synthesize', $scan), ['finding_ids' => ['finding-1'], 'language' => 'id', 'async' => true])
+            ->assertStatus(202)
+            ->assertJson(['success' => true, 'pending' => true, 'job_key' => 'finding-1:id']);
+
+        $this->actingAs($user)
+            ->getJson(route('scans.report.synthesize.status', ['scan' => $scan, 'finding_id' => 'finding-1', 'language' => 'id']))
+            ->assertOk()
+            ->assertJson(['state' => 'completed', 'success' => true, 'count' => 1]);
+
+        $this->actingAs($user)
+            ->postJson(route('scans.report.synthesize', $scan), ['finding_ids' => ['finding-1'], 'language' => 'en', 'async' => true])
+            ->assertStatus(202);
+
+        $this->actingAs($user)
+            ->getJson(route('scans.report.synthesize.status', ['scan' => $scan, 'finding_id' => 'finding-1', 'language' => 'en']))
+            ->assertOk()
+            ->assertJson(['state' => 'failed', 'success' => false]);
+    }
+
     public function test_user_can_view_scan_report_in_id_and_en(): void
     {
         $user = User::factory()->create();

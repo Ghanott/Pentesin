@@ -1687,7 +1687,11 @@
             stepEl.querySelector('.step-indicator').innerHTML = '<span class="step-dot"></span>';
         }
 
-        async function runSynthesisStep(findingId, language) {
+        async function runSynthesisStep(findingId, language, baseTip) {
+            const payload = findingId
+                ? { finding_ids: [findingId], language, async: true }
+                : {};
+
             const response = await fetch('{{ route("scans.report.synthesize", $scan) }}', {
                 method: 'POST',
                 headers: {
@@ -1695,13 +1699,41 @@
                     'Accept': 'application/json',
                     'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content,
                 },
-                body: JSON.stringify(findingId ? { finding_ids: [findingId], language } : {}),
+                body: JSON.stringify(payload),
             });
 
             let data = {};
             try {
                 data = await response.json();
             } catch (_) {}
+
+            if (response.status === 202 && data.pending && findingId) {
+                const statusBase = '{{ route("scans.report.synthesize.status", $scan) }}';
+                const statusUrl = `${statusBase}?finding_id=${encodeURIComponent(findingId)}&language=${encodeURIComponent(language)}`;
+                const startedAt = Date.now();
+                const maxWaitMs = 260000;
+
+                while (Date.now() - startedAt < maxWaitMs) {
+                    await new Promise((resolve) => setTimeout(resolve, 2500));
+                    const elapsedSec = Math.round((Date.now() - startedAt) / 1000);
+                    modalTip.textContent = `${baseTip} · ${elapsedSec} dtk`;
+
+                    const pollRes = await fetch(statusUrl, {
+                        headers: { 'Accept': 'application/json' },
+                    });
+                    if (!pollRes.ok) {
+                        continue;
+                    }
+                    const pollData = await pollRes.json();
+                    if (pollData.state === 'completed' && pollData.success) {
+                        return pollData;
+                    }
+                    if (pollData.state === 'failed') {
+                        throw new Error(pollData.error || 'Gagal memparafrase temuan.');
+                    }
+                }
+                throw new Error('Waktu tunggu sintesis di latar belakang habis.');
+            }
 
             if (!response.ok || !data.success) {
                 throw new Error(data.error || ('HTTP ' + response.status + ': Gagal memparafrase laporan.'));
@@ -1724,7 +1756,7 @@
 
                 try {
                     if (synthTargets.length === 0) {
-                        await runSynthesisStep(null, null);
+                        await runSynthesisStep(null, null, '');
                     } else {
                         const jobs = [];
                         for (const lang of ['id', 'en']) {
@@ -1751,10 +1783,11 @@
                                 setStepActive(step3);
                             }
 
+                            const baseTip = `{{ $isEn ? 'Step' : 'Tahap' }} ${idx + 1}/${jobs.length} · {{ $isEn ? 'Saved incrementally per finding' : 'Disimpan bertahap per temuan' }}`;
                             modalSubtitle.textContent = `{{ $isEn ? 'Synthesizing finding' : 'Memparafrase temuan' }} ${job.index}/${job.totalFindings} (${langLabel}): ${job.title}`;
-                            modalTip.textContent = `{{ $isEn ? 'Step' : 'Tahap' }} ${idx + 1}/${jobs.length} · {{ $isEn ? 'Saved incrementally per finding' : 'Disimpan bertahap per temuan' }}`;
+                            modalTip.textContent = baseTip;
 
-                            await runSynthesisStep(job.findingId, job.lang);
+                            await runSynthesisStep(job.findingId, job.lang, baseTip);
 
                             const pct = Math.round(((idx + 1) / jobs.length) * 92) + 8;
                             progressBar.style.width = Math.min(pct, 99) + '%';
