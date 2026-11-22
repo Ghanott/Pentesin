@@ -434,10 +434,10 @@ class DashboardController extends Controller
                 'target' => (string) ($f['target'] ?? ''),
                 'endpoint' => (string) ($f['endpoint'] ?? ''),
                 'cwe' => (string) ($f['cwe'] ?? ''),
-                'description' => $this->trimNarrativeField((string) ($f['description'] ?? ''), 2500),
-                'impact' => $this->trimNarrativeField((string) ($f['impact'] ?? ''), 1500),
-                'technical_analysis' => $this->trimNarrativeField((string) ($f['technical_analysis'] ?? ''), 2500),
-                'remediation_steps' => $this->trimNarrativeField((string) ($f['remediation_steps'] ?? ''), 1500),
+                'description' => $this->trimNarrativeField((string) ($f['description'] ?? ''), 1800),
+                'impact' => $this->trimNarrativeField((string) ($f['impact'] ?? ''), 1000),
+                'technical_analysis' => $this->trimNarrativeField((string) ($f['technical_analysis'] ?? ''), 1800),
+                'remediation_steps' => $this->trimNarrativeField((string) ($f['remediation_steps'] ?? ''), 1000),
             ];
         }
 
@@ -683,15 +683,24 @@ class DashboardController extends Controller
         }
 
         try {
-            $res = $client->post($candidate['endpoint'], [
+            $requestBody = [
                 'model' => $candidate['model'],
+                'reasoning_effort' => 'low',
                 'messages' => [
                     ['role' => 'system', 'content' => 'You are an expert security report synthesizer. Output strictly valid JSON without code fences or surrounding commentary.'],
                     ['role' => 'user', 'content' => $prompt],
                 ],
                 'temperature' => 0.2,
                 'max_tokens' => 8192,
-            ]);
+            ];
+            $res = $client->post($candidate['endpoint'], $requestBody);
+            if ($res->status() === 400 || $res->status() === 422) {
+                $errLower = strtolower((string) $res->body());
+                if (str_contains($errLower, 'reasoning_effort') || str_contains($errLower, 'unsupported') || str_contains($errLower, 'unknown')) {
+                    unset($requestBody['reasoning_effort']);
+                    $res = $client->post($candidate['endpoint'], $requestBody);
+                }
+            }
 
             if (! $res->successful()) {
                 $err = data_get($res->json(), 'error.message') ?: ('HTTP '.$res->status());
