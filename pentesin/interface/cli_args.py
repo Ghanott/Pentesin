@@ -217,6 +217,29 @@ Examples:
         ),
     )
 
+    parser.add_argument(
+        "--noise-profile",
+        dest="noise_profile",
+        type=str.lower,
+        choices=["off", "quiet", "balanced", "aggressive"],
+        default=None,
+        help=(
+            "Optional target rate-limit profile ('off' = full speed default, 'quiet', "
+            "'balanced', or 'aggressive'). Injects matching rate flags for scanners."
+        ),
+    )
+
+    parser.add_argument(
+        "--auth-credential",
+        dest="auth_credentials",
+        action="append",
+        metavar="LABEL=VALUE",
+        help=(
+            "Provide an authorized test account, cookie, or bearer token for authenticated "
+            "and two-session BOLA/BFLA testing (repeatable, e.g. 'user_a=Bearer ...')."
+        ),
+    )
+
     # Accepted and ignored: this build has no code targets, so there is no
     # change set to scope a run to. Kept so an existing invocation (and the TUI
     # protocol that carries them) does not break.

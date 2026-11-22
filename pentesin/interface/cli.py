@@ -1,6 +1,7 @@
 import atexit
 import contextlib
 import logging
+import os
 import signal
 import sys
 import threading
@@ -96,6 +97,12 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
             getattr(args, "smart_recon", False)
             or os.environ.get("PENTESIN_SMART_RECON") in ("1", "true", "yes")
         ),
+        "noise_profile": (
+            getattr(args, "noise_profile", None)
+            or os.environ.get("PENTESIN_NOISE_PROFILE")
+            or "off"
+        ),
+        "auth_credentials": list(getattr(args, "auth_credentials", None) or []),
         "non_interactive": bool(getattr(args, "non_interactive", False)),
         "local_sources": getattr(args, "local_sources", None) or [],
         "workspace_files": getattr(args, "workspace_files", None) or [],

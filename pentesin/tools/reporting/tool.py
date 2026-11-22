@@ -777,6 +777,61 @@ def _do_delete(
     }
 
 
+_VALID_EVIDENCE_ROLES = frozenset({"baseline", "proof", "verification", "supporting"})
+
+
+def _normalize_evidence_roles(
+    raw: dict[str, str] | None,
+    exchange_ids: list[str] | None,
+) -> tuple[dict[str, str] | None, list[str]]:
+    if not raw:
+        return None, []
+    errors: list[str] = []
+    normalized: dict[str, str] = {}
+    valid_ids = set(exchange_ids or [])
+    for req_id, role in raw.items():
+        clean_id = str(req_id).strip()
+        clean_role = str(role).strip().lower()
+        if not clean_id:
+            continue
+        if clean_role not in _VALID_EVIDENCE_ROLES:
+            errors.append(
+                f"evidence_roles[{clean_id!r}]: invalid role {role!r}; "
+                f"must be one of {sorted(_VALID_EVIDENCE_ROLES)}"
+            )
+            continue
+        if valid_ids and clean_id not in valid_ids:
+            errors.append(
+                f"evidence_roles[{clean_id!r}]: exchange ID must also be listed "
+                "in http_exchange_ids"
+            )
+            continue
+        normalized[clean_id] = clean_role
+    return normalized or None, errors
+
+
+def _validate_verified_quotes(
+    quotes: list[str] | None,
+    evidence: str,
+) -> tuple[list[str] | None, list[str]]:
+    if not quotes:
+        return None, []
+    cleaned: list[str] = []
+    errors: list[str] = []
+    for idx, quote in enumerate(quotes[:10]):
+        text = str(quote or "").strip()
+        if not text:
+            continue
+        if text not in (evidence or ""):
+            errors.append(
+                f"verified_quotes[{idx}]: quote was not found verbatim inside 'evidence'; "
+                "include the exact response/output excerpt in 'evidence' before claiming it"
+            )
+            continue
+        cleaned.append(text)
+    return cleaned or None, errors
+
+
 async def _do_create(
     *,
     title: str,
@@ -800,6 +855,8 @@ async def _do_create(
     cwe: str | None,
     code_locations: list[dict[str, Any]] | None,
     http_exchange_ids: list[str] | None = None,
+    evidence_roles: dict[str, str] | None = None,
+    verified_quotes: list[str] | None = None,
     confidence_rationale: str | None = None,
     fix_verification: str | None = None,
     fix_pr_body: str | None = None,
@@ -820,6 +877,11 @@ async def _do_create(
             "assumptions": assumptions,
         }
     )
+
+    normalized_roles, role_errors = _normalize_evidence_roles(evidence_roles, http_exchange_ids)
+    errors.extend(role_errors)
+    normalized_quotes, quote_errors = _validate_verified_quotes(verified_quotes, evidence)
+    errors.extend(quote_errors)
 
     confidence = (confidence or "").strip().lower()
     errors.extend(
@@ -911,6 +973,8 @@ async def _do_create(
             "fix_verification": fix_verification,
             "fix_pr_body": fix_pr_body,
             "http_exchange_ids": normalized_http_exchange_ids,
+            "evidence_roles": normalized_roles,
+            "verified_quotes": normalized_quotes,
         }
 
         dedupe = await check_duplicate(candidate, existing)
@@ -1002,6 +1066,8 @@ async def create_vulnerability_report(
     cwe: str | None = None,
     code_locations: list[dict[str, Any]] | None = None,
     http_exchange_ids: list[str] | None = None,
+    evidence_roles: dict[str, str] | None = None,
+    verified_quotes: list[str] | None = None,
     confidence_rationale: str | None = None,
     fix_verification: str | None = None,
     fix_pr_body: str | None = None,
@@ -1416,6 +1482,11 @@ async def create_vulnerability_report(
             fix (summary + rationale). Prose/markdown only — the code
             change itself belongs in ``code_locations``. Omit for
             black-box findings.
+        evidence_roles: Optional mapping of proxy exchange ID to role
+            (``baseline``, ``proof``, ``verification``, or ``supporting``)
+            distinguishing normal control requests from exploit proof.
+        verified_quotes: Optional list of verbatim response/output
+            excerpts that must appear exactly inside ``evidence``.
     """
     (
         http_exchange_ids,
@@ -1458,6 +1529,8 @@ async def create_vulnerability_report(
         cwe=cwe,
         code_locations=code_locations,
         http_exchange_ids=http_exchange_ids,
+        evidence_roles=evidence_roles,
+        verified_quotes=verified_quotes,
         fix_verification=fix_verification,
         fix_pr_body=fix_pr_body,
         agent_id=agent_id,

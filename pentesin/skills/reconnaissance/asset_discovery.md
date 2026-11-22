@@ -9,6 +9,16 @@ Most engagements start from a small seed (one domain, one org name) but the real
 
 Only use this skill when all subdomains and related assets of the target are in scope — broad discovery pulls in hosts far beyond the seed.
 
+## Recon Depth Tiers & Scope Discipline
+
+Choose the recon tier that matches the target's rules of engagement and active `noise_profile` (default is full speed unless constrained):
+
+1. **Tier P (Passive Zero-Touch):** Query only third-party intelligence (`crt.sh`, `subfinder -silent`, passive DNS, ASN/whois) — zero packets touch the target directly. Use when active scanning is restricted or before mapping WAF posture.
+2. **Tier A (Active-Safe):** Add `dig` resolution, `httpx -sc -title -server -td -tls-grab`, `robots.txt`/`security.txt`, OpenAPI/GraphQL discovery, and bounded `katana` crawling on confirmed in-scope hosts.
+3. **Tier L (Full / Aggressive):** Add `naabu` port sweeps, `ffuf` vhost/directory fuzzing, `arjun` parameter mining, and `JS-Snooper`/`jsniper.sh` deep JS extraction.
+
+**Scope discipline:** Assets discovered via third-party references or CNAME/SAN pivots that fall outside the authorized scope (`scope_distance > 0`) are **third-party intel only** — record them as notes for context, never actively probe or fuzz them.
+
 ## Attack Surface
 
 - Hosts discoverable via issued certificates (CT logs) but absent from DNS brute force

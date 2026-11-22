@@ -354,6 +354,8 @@ class ReportState:
         http_exchange_ids: list[str] | None = None,
         fix_verification: str | None = None,
         fix_pr_body: str | None = None,
+        evidence_roles: dict[str, str] | None = None,
+        verified_quotes: list[str] | None = None,
         finding_class: str | None = None,
         dependency_metadata: dict[str, str] | None = None,
         agent_id: str | None = None,
@@ -412,6 +414,10 @@ class ReportState:
             report["code_locations"] = code_locations
         if http_exchange_ids:
             report["http_exchange_ids"] = http_exchange_ids
+        if evidence_roles:
+            report["evidence_roles"] = evidence_roles
+        if verified_quotes:
+            report["verified_quotes"] = verified_quotes
         if fix_verification:
             report["fix_verification"] = fix_verification.strip()
         if fix_pr_body:

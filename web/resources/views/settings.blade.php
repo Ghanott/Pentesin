@@ -45,6 +45,49 @@
                 </form>
             </section>
 
+            <section class="settings-card">
+                <header class="card-head">
+                    <h2>Integrasi Web Search</h2>
+                    <p>Opsional untuk riset CVE &amp; bypass real-time. Semua API key disimpan terenkripsi; tanpa key, agen memakai <code>vulnx</code> lokal.</p>
+                </header>
+
+                <form method="POST" action="{{ route('integrations.update') }}" class="profile-form">
+                    @csrf
+                    @method('PUT')
+
+                    <div class="field">
+                        <label for="ws-provider">Provider prioritas</label>
+                        <select id="ws-provider" name="web_search_provider">
+                            @foreach(['auto' => 'Otomatis', 'exa' => 'Exa', 'perplexity' => 'Perplexity', 'tavily' => 'Tavily', 'brave' => 'Brave Search'] as $val => $lbl)
+                                <option value="{{ $val }}" @selected(($integration->web_search_provider ?? 'auto') === $val)>{{ $lbl }}</option>
+                            @endforeach
+                        </select>
+                    </div>
+
+                    <div class="field">
+                        <label for="exa-key">EXA_API_KEY <span class="key-tag">{{ ($integration->has_exa ?? false) ? 'Tersimpan' : 'Kosong' }}</span></label>
+                        <input id="exa-key" name="exa_api_key" type="password" autocomplete="new-password" maxlength="4096" placeholder="Kosongkan untuk mempertahankan key lama">
+                    </div>
+
+                    <div class="field">
+                        <label for="pplx-key">PERPLEXITY_API_KEY <span class="key-tag">{{ ($integration->has_perplexity ?? false) ? 'Tersimpan' : 'Kosong' }}</span></label>
+                        <input id="pplx-key" name="perplexity_api_key" type="password" autocomplete="new-password" maxlength="4096" placeholder="Kosongkan untuk mempertahankan key lama">
+                    </div>
+
+                    <div class="field">
+                        <label for="tavily-key">TAVILY_API_KEY <span class="key-tag">{{ ($integration->has_tavily ?? false) ? 'Tersimpan' : 'Kosong' }}</span></label>
+                        <input id="tavily-key" name="tavily_api_key" type="password" autocomplete="new-password" maxlength="4096" placeholder="Kosongkan untuk mempertahankan key lama">
+                    </div>
+
+                    <div class="field">
+                        <label for="brave-key">BRAVE_API_KEY <span class="key-tag">{{ ($integration->has_brave ?? false) ? 'Tersimpan' : 'Kosong' }}</span></label>
+                        <input id="brave-key" name="brave_api_key" type="password" autocomplete="new-password" maxlength="4096" placeholder="Kosongkan untuk mempertahankan key lama">
+                    </div>
+
+                    <button class="btn-primary" type="submit">Simpan integrasi</button>
+                </form>
+            </section>
+
             <section class="settings-list">
                 <header class="list-head">
                     <h2>Koneksi tersimpan</h2>

@@ -385,12 +385,16 @@ async def _supervise_scan(  # noqa: PLR0915
             )
 
     async def heartbeat_loop() -> None:
+        nonlocal operator_stopped
         while not stop.is_set():
             try:
                 await heartbeat()
             except urllib.error.HTTPError as exc:
                 if exc.code in {404, 409}:
-                    logger.warning("Scan ended or lease revoked on server (%s), stopping scan locally", exc.code)
+                    logger.warning(
+                        "Scan ended or lease revoked on server (%s), stopping scan locally",
+                        exc.code,
+                    )
                     operator_stopped = True
                     if scan_task is not None:
                         scan_task.cancel()
@@ -424,6 +428,45 @@ async def _supervise_scan(  # noqa: PLR0915
     report.cleanup(status=status)
     await heartbeat(status)
     return {"status": status}
+
+
+def _apply_job_integrations(settings: Any, raw_integrations: Any) -> None:
+    if not isinstance(raw_integrations, dict):
+        return
+    if raw_integrations.get("web_search_provider") in {
+        "auto",
+        "perplexity",
+        "exa",
+        "tavily",
+        "brave",
+    }:
+        settings.integrations.web_search_provider = raw_integrations["web_search_provider"]
+    for key_field in ("exa_api_key", "perplexity_api_key", "tavily_api_key", "brave_api_key"):
+        val = raw_integrations.get(key_field)
+        if isinstance(val, str) and val.strip():
+            setattr(settings.integrations, key_field, val.strip())
+
+
+def _build_job_instruction(job: dict[str, Any]) -> str:
+    base_instruction = str(job.get("instruction") or "")
+    retest_info = job.get("retest_target_finding")
+    if job.get("kind") != "retest" or not isinstance(retest_info, dict):
+        return base_instruction
+    notes = f"\nOperator notes: {base_instruction}" if base_instruction else ""
+    return (
+        "DEDICATED FINDING RETEST MODE:\n"
+        f"Retest ONLY this previously reported finding: {retest_info.get('title', 'Unknown')}\n"
+        f"Endpoint: {retest_info.get('endpoint') or 'N/A'}\n"
+        f"Original PoC steps:\n{retest_info.get('poc_description') or 'N/A'}\n\n"
+        f"Original PoC code:\n{retest_info.get('poc_script_code') or 'N/A'}\n\n"
+        "Rules:\n"
+        "1. Execute minimal targeted reproduction against the live target.\n"
+        "2. Check 5 axes (reachability, preconditions, reproducibility, scope, impact).\n"
+        "3. Conclude explicitly with verdict: 'Still reproducible', 'Fixed', "
+        "or 'Cannot confirm'.\n"
+        "4. File a vulnerability report ONLY if still reproducible; "
+        "otherwise finish with clear verdict.\n" + notes
+    )
 
 
 async def _execute_job(base: str, token: str, job: dict[str, Any]) -> None:
@@ -476,6 +519,7 @@ async def _execute_job(base: str, token: str, job: dict[str, Any]) -> None:
     settings.llm.model = profile.get("model")
     settings.llm.api_key = profile.get("api_key")
     settings.llm.api_base = profile.get("api_base")
+    _apply_job_integrations(settings, job.get("integrations"))
     target_type, details = infer_target_type(job["target"])
     if target_type not in {"web_application", "ip_address"}:
         raise ValueError("web runner accepts live targets only")
@@ -486,10 +530,14 @@ async def _execute_job(base: str, token: str, job: dict[str, Any]) -> None:
         "scan_id": scan_id,
         "run_name": scan_id,
         "targets": [{"original": job["target"], "type": target_type, "details": details}],
-        "user_instructions": job.get("instruction") or "",
+        "user_instructions": _build_job_instruction(job),
         "scan_mode": scan_mode,
         "context_mode": job.get("context_mode") is True,
         "smart_recon": job.get("smart_recon") is True,
+        "noise_profile": str(job.get("noise_profile") or "off"),
+        "auth_credentials": job.get("auth_credentials")
+        if isinstance(job.get("auth_credentials"), list)
+        else [],
     }
     if job.get("resume") is True:
         state_dir = runtime_state_dir(run_dir_for(scan_id))

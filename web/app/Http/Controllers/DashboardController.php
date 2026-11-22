@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\IntegrationSetting;
 use App\Models\LlmProfile;
 use App\Models\Scan;
 use Illuminate\Contracts\View\View;
@@ -27,12 +28,151 @@ class DashboardController extends Controller
     {
         $this->expireOwnerLeases();
 
-        return view('history', ['scans' => Scan::where('user_id', auth()->id())->where('kind', 'scan')->latest()->paginate(20)]);
+        $scans = Scan::where('user_id', auth()->id())
+            ->whereIn('kind', ['scan', 'retest'])
+            ->latest()
+            ->paginate(20);
+
+        $allUserScans = Scan::where('user_id', auth()->id())
+            ->where('kind', 'scan')
+            ->where('status', 'completed')
+            ->orderBy('created_at')
+            ->get(['id', 'target', 'findings', 'created_at']);
+
+        $prevByTarget = [];
+        $targetDiffs = [];
+        foreach ($allUserScans as $completed) {
+            $normTarget = $this->normalizeTargetKey((string) $completed->target);
+            $currentKeys = $this->findingFingerprints($completed->findings ?? []);
+            if (isset($prevByTarget[$normTarget])) {
+                $prevKeys = $prevByTarget[$normTarget];
+                $targetDiffs[$completed->id] = [
+                    'new' => count(array_diff($currentKeys, $prevKeys)),
+                    'persisted' => count(array_intersect($currentKeys, $prevKeys)),
+                    'fixed' => count(array_diff($prevKeys, $currentKeys)),
+                ];
+            }
+            $prevByTarget[$normTarget] = $currentKeys;
+        }
+
+        return view('history', [
+            'scans' => $scans,
+            'targetDiffs' => $targetDiffs,
+        ]);
+    }
+
+    /**
+     * Normalize a target string to host+scheme key for cross-scan comparison.
+     */
+    private function normalizeTargetKey(string $target): string
+    {
+        $trimmed = trim($target);
+        $url = str_contains($trimmed, '://') ? $trimmed : 'https://'.$trimmed;
+        $parts = parse_url($url);
+        if (! is_array($parts) || empty($parts['host'])) {
+            return strtolower($trimmed);
+        }
+        $host = strtolower((string) $parts['host']);
+        $port = isset($parts['port']) ? ':'.$parts['port'] : '';
+
+        return $host.$port;
+    }
+
+    /**
+     * @param  array<int, mixed>  $findings
+     * @return array<int, string>
+     */
+    private function findingFingerprints(array $findings): array
+    {
+        $keys = [];
+        foreach ($findings as $finding) {
+            if (! is_array($finding)) {
+                continue;
+            }
+            $title = strtolower(trim((string) ($finding['title'] ?? '')));
+            $endpoint = strtolower(trim((string) ($finding['endpoint'] ?? '')));
+            if ($title !== '') {
+                $keys[] = $title.'|'.$endpoint;
+            }
+        }
+
+        return array_values(array_unique($keys));
     }
 
     public function settings(): View
     {
-        return view('settings', ['profiles' => LlmProfile::where('user_id', auth()->id())->orderBy('name')->get()->map(fn (LlmProfile $profile) => (object) ['id' => $profile->id, 'name' => $profile->name, 'model' => $profile->model, 'api_base' => $profile->api_base, 'api_type' => $profile->api_type, 'has_key' => filled($profile->api_key)])]);
+        $integration = IntegrationSetting::where('user_id', auth()->id())->first();
+
+        return view('settings', [
+            'profiles' => LlmProfile::where('user_id', auth()->id())->orderBy('name')->get()->map(fn (LlmProfile $profile) => (object) ['id' => $profile->id, 'name' => $profile->name, 'model' => $profile->model, 'api_base' => $profile->api_base, 'api_type' => $profile->api_type, 'has_key' => filled($profile->api_key)]),
+            'integration' => (object) [
+                'web_search_provider' => $integration?->web_search_provider ?? 'auto',
+                'has_exa' => filled($integration?->exa_api_key),
+                'has_perplexity' => filled($integration?->perplexity_api_key),
+                'has_tavily' => filled($integration?->tavily_api_key),
+                'has_brave' => filled($integration?->brave_api_key),
+            ],
+        ]);
+    }
+
+    public function updateIntegrations(Request $request): RedirectResponse
+    {
+        $data = $request->validate([
+            'web_search_provider' => ['required', Rule::in(['auto', 'exa', 'perplexity', 'tavily', 'brave'])],
+            'exa_api_key' => ['nullable', 'string', 'max:4096'],
+            'perplexity_api_key' => ['nullable', 'string', 'max:4096'],
+            'tavily_api_key' => ['nullable', 'string', 'max:4096'],
+            'brave_api_key' => ['nullable', 'string', 'max:4096'],
+        ]);
+
+        $record = IntegrationSetting::firstOrNew(['user_id' => $request->user()->id]);
+        $record->web_search_provider = $data['web_search_provider'];
+        foreach (['exa_api_key', 'perplexity_api_key', 'tavily_api_key', 'brave_api_key'] as $field) {
+            if (filled($data[$field] ?? null)) {
+                $record->{$field} = trim((string) $data[$field]);
+            }
+        }
+        $record->save();
+
+        return back()->with('status', 'Konfigurasi integrasi Web Search tersimpan terenkripsi.');
+    }
+
+    public function retestFinding(Request $request, Scan $scan, string $findingId): RedirectResponse
+    {
+        $scan = $this->ownedScan($request, $scan);
+        $finding = collect($scan->findings ?? [])->first(
+            fn (mixed $item): bool => is_array($item) && (string) ($item['id'] ?? '') === $findingId
+        );
+        abort_unless(is_array($finding), 404, 'Temuan tidak ditemukan.');
+
+        $integration = IntegrationSetting::where('user_id', $request->user()->id)->first();
+        $retestScan = Scan::create([
+            'user_id' => $request->user()->id,
+            'target' => $scan->target,
+            'instruction' => 'Retest temuan '.($finding['id'] ?? $findingId).': '.($finding['title'] ?? ''),
+            'mode' => 'standard',
+            'context_mode' => (bool) $scan->context_mode,
+            'smart_recon' => false,
+            'noise_profile' => $scan->noise_profile ?: 'off',
+            'auth_credentials' => $scan->auth_credentials,
+            'integration_snapshot' => $integration?->runnerPayload() ?? $scan->integration_snapshot,
+            'retest_target_finding' => [
+                'parent_scan_id' => $scan->id,
+                'finding_id' => (string) ($finding['id'] ?? $findingId),
+                'title' => (string) ($finding['title'] ?? ''),
+                'endpoint' => (string) ($finding['endpoint'] ?? ''),
+                'poc_description' => (string) ($finding['poc_description'] ?? ''),
+                'poc_script_code' => (string) ($finding['poc_script_code'] ?? ''),
+            ],
+            'kind' => 'retest',
+            'status' => 'queued',
+            'llm_profile_id' => $scan->llm_profile_id,
+            'max_budget' => $scan->max_budget,
+            'llm_snapshot' => $scan->llm_snapshot,
+            'findings' => [],
+        ]);
+
+        return redirect()->route('scans.show', $retestScan)->with('status', 'Retest temuan masuk antrean runner.');
     }
 
     public function show(Scan $scan): View
@@ -316,16 +456,25 @@ class DashboardController extends Controller
             }],
             'instruction' => ['nullable', 'string', 'max:10000'],
             'mode' => ['required', Rule::in(['quick', 'standard', 'deep'])],
+            'noise_profile' => ['sometimes', Rule::in(['off', 'quiet', 'balanced', 'aggressive'])],
+            'auth_credentials_raw' => ['nullable', 'string', 'max:10000'],
             'context_mode' => ['sometimes', 'accepted'],
             'smart_recon' => ['sometimes', 'accepted'],
             'llm_profile_id' => ['required', 'integer', 'exists:llm_profiles,id'],
             'max_budget' => ['nullable', 'numeric', 'min:0.01', 'max:1000'],
         ]);
         $profile = LlmProfile::where('user_id', $request->user()->id)->findOrFail($data['llm_profile_id']);
+        $integration = IntegrationSetting::where('user_id', $request->user()->id)->first();
         $mode = $data['mode'] === 'quick' ? 'standard' : $data['mode'];
+        $authCredentials = array_values(array_slice(array_filter(
+            array_map('trim', preg_split('/\r?\n/', (string) ($data['auth_credentials_raw'] ?? '')) ?: []),
+            fn (string $line): bool => $line !== ''
+        ), 0, 10));
         $scan = Scan::create([
             'user_id' => $request->user()->id, 'target' => $data['target'], 'instruction' => $data['instruction'] ?? '',
-            'mode' => $mode, 'context_mode' => (bool) ($data['context_mode'] ?? false), 'smart_recon' => (bool) ($data['smart_recon'] ?? false), 'kind' => 'scan', 'status' => 'queued', 'llm_profile_id' => $profile->id,
+            'mode' => $mode, 'noise_profile' => $data['noise_profile'] ?? 'off', 'auth_credentials' => $authCredentials ?: null,
+            'integration_snapshot' => $integration?->runnerPayload(),
+            'context_mode' => (bool) ($data['context_mode'] ?? false), 'smart_recon' => (bool) ($data['smart_recon'] ?? false), 'kind' => 'scan', 'status' => 'queued', 'llm_profile_id' => $profile->id,
             'max_budget' => $data['max_budget'] ?? null, 'llm_snapshot' => $profile->runnerProfile(), 'findings' => [],
         ]);
 

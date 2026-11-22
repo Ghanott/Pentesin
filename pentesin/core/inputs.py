@@ -219,6 +219,82 @@ def build_root_task(scan_config: dict[str, Any]) -> str:
     return task
 
 
+_NOISE_PROFILE_PRESETS: dict[str, tuple[int, int, str, str]] = {
+    # Tuple fields: requests/sec, max concurrency, nmap timing template, nmap max retries.
+    "quiet": (2, 1, "-T2", "2"),
+    "balanced": (5, 2, "-T3", "2"),
+    "aggressive": (20, 4, "-T4", "1"),
+}
+
+
+def render_noise_profile_guidance(profile: str | None) -> str:
+    """Return low-and-slow scanner flags for a noise profile, or '' when off."""
+    normalized = (profile or "off").strip().lower()
+    preset = _NOISE_PROFILE_PRESETS.get(normalized)
+    if preset is None:
+        return ""
+    rps, conc, timing, retries = preset
+    delay_sec = f"{1 / rps:.2f}".rstrip("0").rstrip(".")
+    return (
+        f"Active noise profile: {normalized} (max {rps} req/s per host, "
+        f"max {conc} concurrent request(s)). Apply these scanner rate flags:\n"
+        f"- nmap: {timing} --max-rate {rps} --max-retries {retries}\n"
+        f"- nuclei: -rate-limit {rps} -c {conc}\n"
+        f"- httpx: -rl {rps} -t {conc}\n"
+        f"- katana: -rl {rps} -c {conc}\n"
+        f"- ffuf: -rate {rps} -t {conc}\n"
+        f"- sqlmap: --delay={delay_sec} --threads=1\n"
+        "- Back off on HTTP 429/503 responses and respect Retry-After headers."
+    )
+
+
+def _normalize_auth_credentials(raw: Any) -> list[dict[str, str]]:
+    """Sanitize operator-provided test accounts/sessions for authenticated testing."""
+    if not isinstance(raw, list):
+        return []
+    cleaned: list[dict[str, str]] = []
+    for index, entry in enumerate(raw[:10], start=1):
+        if isinstance(entry, str):
+            text = entry.strip()
+            if not text:
+                continue
+            if "=" in text:
+                label, _, value = text.partition("=")
+            else:
+                label, value = f"account_{index}", text
+            cleaned.append(
+                {
+                    "label": _safe_task_text(label, 60) or f"account_{index}",
+                    "role": "user",
+                    "auth_type": "custom",
+                    "value": _safe_task_text(value, 2000),
+                    "note": "",
+                }
+            )
+            continue
+        if not isinstance(entry, dict):
+            continue
+        value = _safe_task_text(
+            entry.get("value") or entry.get("token") or entry.get("password"), 2000
+        )
+        username = _safe_task_text(entry.get("username"), 160)
+        if not value and not username:
+            continue
+        display_value = f"{username}:{value}" if username and value else (value or username)
+        cleaned.append(
+            {
+                "label": _safe_task_text(entry.get("label") or entry.get("name"), 60)
+                or f"account_{index}",
+                "role": _safe_task_text(entry.get("role"), 40) or "user",
+                "auth_type": _safe_task_text(entry.get("auth_type") or entry.get("type"), 40)
+                or "custom",
+                "value": display_value,
+                "note": _safe_task_text(entry.get("note"), 200),
+            }
+        )
+    return cleaned
+
+
 def build_scope_context(scan_config: dict[str, Any]) -> dict[str, Any]:
     authorized: list[dict[str, str]] = []
     seen: set[tuple[str, str]] = set()
@@ -247,11 +323,21 @@ def build_scope_context(scan_config: dict[str, Any]) -> dict[str, Any]:
                     authorized.append(entry)
                     seen.add(ident)
 
-    return {
+    noise_profile = str(scan_config.get("noise_profile") or "off").strip().lower()
+    noise_guidance = render_noise_profile_guidance(noise_profile)
+    auth_credentials = _normalize_auth_credentials(scan_config.get("auth_credentials"))
+
+    context: dict[str, Any] = {
         "scope_source": "user_scan_config",
         "authorized_targets": authorized,
         "smart_recon": scan_config.get("smart_recon") is True,
     }
+    if noise_guidance:
+        context["noise_profile"] = noise_profile
+        context["noise_guidance"] = noise_guidance
+    if auth_credentials:
+        context["auth_credentials"] = auth_credentials
+    return context
 
 
 def build_scan_targets(scan_config: dict[str, Any]) -> list[str]:

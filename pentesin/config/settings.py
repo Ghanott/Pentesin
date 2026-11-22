@@ -10,6 +10,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"]
 ApiType = Literal["responses", "chat_completions"]
+NoiseProfile = Literal["off", "quiet", "balanced", "aggressive"]
 
 DEFAULT_MAX_TURNS = 500
 
@@ -205,6 +206,11 @@ class ContextSettings(BaseSettings):
         alias="PENTESIN_TOOL_OUTPUT_MAX_BYTES",
         validation_alias=_pentesin_alias("TOOL_OUTPUT_MAX_BYTES"),
     )
+    untrusted_output_boundary: bool = Field(
+        default=True,
+        alias="PENTESIN_UNTRUSTED_OUTPUT_BOUNDARY",
+        validation_alias=_pentesin_alias("UNTRUSTED_OUTPUT_BOUNDARY"),
+    )
 
 
 class RuntimeSettings(BaseSettings):
@@ -227,6 +233,16 @@ class RuntimeSettings(BaseSettings):
         alias="PENTESIN_MAX_CONTEXT_IMAGES",
         validation_alias=_pentesin_alias("MAX_CONTEXT_IMAGES"),
     )
+    noise_profile: NoiseProfile = Field(
+        default="off",
+        alias="PENTESIN_NOISE_PROFILE",
+        validation_alias=_pentesin_alias("NOISE_PROFILE"),
+    )
+
+    @field_validator("noise_profile", mode="before")
+    @classmethod
+    def _normalize_noise_profile(cls, value: object) -> object:
+        return _lowercase(value)
 
 
 class TelemetrySettings(BaseSettings):
@@ -239,7 +255,7 @@ class TelemetrySettings(BaseSettings):
     )
 
 
-WebSearchProvider = Literal["auto", "perplexity", "exa"]
+WebSearchProvider = Literal["auto", "perplexity", "exa", "tavily", "brave"]
 ExaSearchType = Literal["auto", "fast", "instant", "deep-lite", "deep", "deep-reasoning"]
 
 
@@ -254,6 +270,16 @@ class IntegrationSettings(BaseSettings):
     exa_api_key: str | None = Field(
         default=None,
         alias="EXA_API_KEY",
+        repr=False,
+    )
+    tavily_api_key: str | None = Field(
+        default=None,
+        alias="TAVILY_API_KEY",
+        repr=False,
+    )
+    brave_api_key: str | None = Field(
+        default=None,
+        alias="BRAVE_API_KEY",
         repr=False,
     )
     web_search_provider: WebSearchProvider = Field(

@@ -44,10 +44,11 @@ from pentesin.tools.notes.tools import (
     delete_note,
     get_note,
     list_notes,
+    search_notes,
     update_note,
 )
 from pentesin.tools.nullish import is_nullish
-from pentesin.tools.output_store import bound_and_store, bound_text
+from pentesin.tools.output_store import bound_and_store, bound_text, wrap_untrusted_output
 from pentesin.tools.proxy.tools import (
     list_requests,
     list_sitemap,
@@ -80,7 +81,12 @@ from pentesin.tools.todo.tools import (
     update_todo,
 )
 from pentesin.tools.wait_for_user.tool import wait_for_user
-from pentesin.tools.web_search.tool import web_get_contents, web_search
+from pentesin.tools.web_search.tool import (
+    is_web_get_contents_configured,
+    is_web_search_configured,
+    web_get_contents,
+    web_search,
+)
 from pentesin.tools.xray.tools import xray_scan
 
 
@@ -138,11 +144,26 @@ def _tool_output_limits() -> tuple[int, int]:
     return context.tool_output_max_lines, context.tool_output_max_bytes
 
 
-async def _bound_result(result: Any) -> Any:
+_UNTRUSTED_OUTPUT_TOOLS: frozenset[str] = frozenset(
+    {
+        "view_request",
+        "repeat_request",
+        "web_search",
+        "web_get_contents",
+        "xray_scan",
+        "triage_recon_data",
+    }
+)
+
+
+async def _bound_result(result: Any, *, tool_name: str | None = None) -> Any:
     if not isinstance(result, str):
         return result
     max_lines, max_bytes = _tool_output_limits()
-    return await bound_and_store(result, max_lines=max_lines, max_bytes=max_bytes)
+    bounded = await bound_and_store(result, max_lines=max_lines, max_bytes=max_bytes)
+    if tool_name in _UNTRUSTED_OUTPUT_TOOLS and load_settings().context.untrusted_output_boundary:
+        return wrap_untrusted_output(bounded, source=tool_name)
+    return bounded
 
 
 def _format_tool_error(exc: Exception) -> str:
@@ -156,9 +177,10 @@ def _with_bounded_result(tool: FunctionTool) -> FunctionTool:
     if getattr(tool, "_pentesin_bounded", False):
         return tool
     invoke_tool = tool.on_invoke_tool
+    tool_name = tool.name
 
     async def invoke(ctx: Any, raw_input: str) -> Any:
-        return await _bound_result(await invoke_tool(ctx, raw_input))
+        return await _bound_result(await invoke_tool(ctx, raw_input), tool_name=tool_name)
 
     tool.on_invoke_tool = invoke
     tool._pentesin_bounded = True  # type: ignore[attr-defined]
@@ -635,6 +657,7 @@ _BASE_TOOLS: tuple[Tool, ...] = (
     delete_todo,
     create_note,
     list_notes,
+    search_notes,
     get_note,
     update_note,
     delete_note,
@@ -761,14 +784,22 @@ def build_pentesin_agent(
             supports_images=supports_images,
         )
 
+    web_search_ready = is_web_search_configured()
+    web_fetch_ready = is_web_get_contents_configured()
+    active_base_tools = [
+        tool
+        for tool in _BASE_TOOLS
+        if not (tool is web_search and not web_search_ready)
+        and not (tool is web_get_contents and not web_fetch_ready)
+    ]
     agent_tools = [*_EXTRA_TOOLS, *(extra_tools or [])]
     if interactive:
         # Yielding to the user is only meaningful when one is attached.
         agent_tools.append(wait_for_user)
     if is_root:
-        tools: list[Tool] = [*_BASE_TOOLS, *agent_tools, finish_tool]
+        tools: list[Tool] = [*active_base_tools, *agent_tools, finish_tool]
     else:
-        tools = [*_BASE_TOOLS, *agent_tools, agent_finish]
+        tools = [*active_base_tools, *agent_tools, agent_finish]
     _ensure_unique_tool_names(tools)
     tools = [
         _with_bounded_result(_with_strictness(_with_coerced_arguments(tool), strict_tool_schemas))

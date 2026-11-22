@@ -9,6 +9,7 @@ is injected by the runner via :func:`configure_spill_writer`.
 from __future__ import annotations
 
 import logging
+import secrets
 import uuid
 from typing import TYPE_CHECKING
 
@@ -34,6 +35,27 @@ if TYPE_CHECKING:
     SpillWriter = Callable[[str, str], Awaitable[str | None]]
 
 _spill: dict[str, SpillWriter] = {}
+_BOUNDARY_NONCE: str = secrets.token_hex(8)
+
+
+def get_untrusted_boundary_nonce() -> str:
+    """Return the per-process random nonce used to frame untrusted target output."""
+    return _BOUNDARY_NONCE
+
+
+def wrap_untrusted_output(text: str, *, source: str) -> str:
+    """Frame target-controlled tool output with a per-run nonce boundary.
+
+    Helps prevent indirect prompt injection in target HTTP responses, web
+    search results, or scanner banners without restricting any tool actions.
+    """
+    nonce = _BOUNDARY_NONCE
+    safe_source = "".join(ch for ch in source if ch.isalnum() or ch in ("_", "-", ".")) or "tool"
+    return (
+        f"<<<PENTESIN_UNTRUSTED_OUTPUT source={safe_source} nonce={nonce}>>>\n"
+        f"{text}\n"
+        f"<<<END_PENTESIN_UNTRUSTED_OUTPUT nonce={nonce}>>>"
+    )
 
 
 def configure_spill_writer(writer: SpillWriter | None) -> None:

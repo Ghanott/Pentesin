@@ -77,7 +77,8 @@ def test_explicit_exa_without_a_key_names_only_exa() -> None:
 def test_no_keys_names_both_providers() -> None:
     resolved = tool._resolve_provider(IntegrationSettings())
     assert isinstance(resolved, dict)
-    assert "EXA_API_KEY or PERPLEXITY_API_KEY" in resolved["error"]
+    for key_name in ("EXA_API_KEY", "PERPLEXITY_API_KEY", "TAVILY_API_KEY", "BRAVE_API_KEY"):
+        assert key_name in resolved["error"]
 
 
 def test_exa_content_requests_summaries_and_renders_results(
@@ -165,7 +166,10 @@ def test_do_search_reports_empty_exa_results_as_unexpected(
         ({"PERPLEXITY_API_KEY": "pk"}, []),
         ({"PENTESIN_WEB_SEARCH_PROVIDER": "exa", "PERPLEXITY_API_KEY": "pk"}, ["EXA_API_KEY"]),
         ({"PENTESIN_WEB_SEARCH_PROVIDER": "exa", "EXA_API_KEY": "ek"}, []),
-        ({"PENTESIN_WEB_SEARCH_PROVIDER": "perplexity", "EXA_API_KEY": "ek"}, ["PERPLEXITY_API_KEY"]),
+        (
+            {"PENTESIN_WEB_SEARCH_PROVIDER": "perplexity", "EXA_API_KEY": "ek"},
+            ["PERPLEXITY_API_KEY"],
+        ),
         ({"PENTESIN_WEB_SEARCH_PROVIDER": "perplexity", "PERPLEXITY_API_KEY": "pk"}, []),
     ],
 )

@@ -59,6 +59,12 @@
                                     @else
                                         <span class="cell-empty">—</span>
                                     @endif
+                                    @if(isset($targetDiffs[$scan->id]))
+                                        @php $diff = $targetDiffs[$scan->id]; @endphp
+                                        <div style="font-size:11px; margin-top:2px; opacity:0.85;">
+                                            +{{ $diff['new'] }} baru · {{ $diff['persisted'] }} tetap · -{{ $diff['fixed'] }} fixed
+                                        </div>
+                                    @endif
                                 </td>
                                 <td class="col-time">{{ $scan->created_at->locale('id')->diffForHumans() }}</td>
                                 <td class="col-actions">

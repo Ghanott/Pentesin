@@ -147,15 +147,13 @@ endpoint is broken/unreachable for unrelated reasons".
 Run this pass on every finding before calling
 `create_vulnerability_report`:
 
-1. **Argue the other side.** Spend real effort building the strongest
-   case that this is *not* exploitable, or not as severe as you think.
-   Look for the guard you might have missed, the deployment context that
-   constrains it, the precondition you assumed.
-2. **Record what you found** in `counterevidence`. If you found a real
-   constraint, say what it is and why it does not neutralize the finding.
-   If you genuinely found nothing, say what you checked — "no input
-   validation, WAF, or authorization check was found on this path; tested
-   both authenticated and unauthenticated" — not just "none".
+1. **Argue the other side (5-Axis Adversarial Self-Check).** Spend real effort building the strongest case that this is *not* exploitable, or not as severe as you think, across all five axes:
+   - **Reachability:** Can a real attacker actually reach this endpoint/sink?
+   - **Preconditions:** Does exploitation require an unrealistic starting position or already-compromised privilege?
+   - **Downstream controls:** Does something between the trigger and the goal neutralize the impact?
+   - **Scope:** Is the affected asset strictly inside the authorized engagement scope?
+   - **Simpler explanation:** Is there a benign or intended reason for the observed response?
+2. **Record measured impact & counterevidence.** Express the outcome with concrete numbers and denominators wherever measurable (e.g. *"3 of 20 payload variants returned other-tenant records; 17 blocked by WAF"*, *"2 of 2 admin endpoints accessible with standard user token"*). In `counterevidence`, record what you checked and why any constraint does not neutralize the finding — never write just `"none"`.
 3. **Set `confidence` honestly.** A working PoC against a live target is
    `high`. A complete static trace you could not execute is at best
    `medium`, and `confidence_rationale` must name the gap. Do not inflate

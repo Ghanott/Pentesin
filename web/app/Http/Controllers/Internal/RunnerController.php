@@ -35,7 +35,7 @@ class RunnerController extends Controller
             $lease = Str::random(64);
             $scan->update(['status' => 'running', 'phase' => 'Menyiapkan runner', 'lease_token' => $lease, 'lease_expires_at' => now()->addSeconds(90), 'started_at' => now()]);
 
-            return response()->json(['job' => $scan->only(['id', 'kind', 'target', 'instruction', 'mode', 'max_budget', 'context_mode', 'smart_recon']) + ['resume' => $scan->agents()->exists(), 'lease_token' => $lease, 'profile' => $scan->llm_snapshot, 'run_dir' => base_path('../pentesin_runs/web-'.$scan->id)]])->header('Cache-Control', 'no-store');
+            return response()->json(['job' => $scan->only(['id', 'kind', 'target', 'instruction', 'mode', 'max_budget', 'context_mode', 'smart_recon', 'noise_profile', 'retest_target_finding']) + ['resume' => $scan->agents()->exists(), 'lease_token' => $lease, 'profile' => $scan->llm_snapshot, 'auth_credentials' => $scan->auth_credentials ?? [], 'integrations' => $scan->integration_snapshot ?? [], 'run_dir' => base_path('../pentesin_runs/web-'.$scan->id)]])->header('Cache-Control', 'no-store');
         });
     }
 
@@ -75,7 +75,7 @@ class RunnerController extends Controller
         foreach (['title', 'description', 'impact', 'target', 'technical_analysis', 'poc_description', 'poc_script_code', 'remediation_steps', 'cve', 'cwe', 'endpoint', 'method', 'timestamp', 'agent_id', 'agent_name', 'finding_class', 'fix_effort', 'confidence', 'fix_verification', 'fix_pr_body'] as $field) {
             $findingRules["findings.*.$field"] = ['sometimes', 'nullable', 'string', 'max:1000000'];
         }
-        foreach (['evidence', 'assumptions', 'counterevidence', 'severity_change_conditions', 'cvss_breakdown', 'code_locations', 'http_exchange_ids', 'dependency_metadata'] as $field) {
+        foreach (['evidence', 'assumptions', 'counterevidence', 'severity_change_conditions', 'cvss_breakdown', 'code_locations', 'http_exchange_ids', 'evidence_roles', 'verified_quotes', 'dependency_metadata'] as $field) {
             $findingRules["findings.*.$field"] = ['sometimes', 'nullable'];
         }
         $data = $request->validate([

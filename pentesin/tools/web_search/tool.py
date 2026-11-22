@@ -161,6 +161,70 @@ def _exa_page_text(api_key: str, urls: list[str]) -> tuple[str, set[str]]:
     return "\n\n".join(blocks), fetched
 
 
+def _tavily_content(api_key: str, query: str) -> str:
+    url = "https://api.tavily.com/search"
+    payload = {
+        "api_key": api_key,
+        "query": query,
+        "search_depth": "advanced",
+        "include_answer": True,
+        "max_results": 5,
+    }
+    with requests.post(url, json=payload, timeout=120) as response:
+        response.raise_for_status()
+        body: dict[str, Any] = response.json()
+    parts: list[str] = []
+    answer = str(body.get("answer") or "").strip()
+    if answer:
+        parts.append(answer)
+    for item in body.get("results") or []:
+        if not isinstance(item, dict):
+            continue
+        title = str(item.get("title") or item.get("url") or "").strip()
+        item_url = str(item.get("url") or "").strip()
+        snippet = str(item.get("content") or "").strip()
+        if item_url:
+            block = f"### {title}\n{item_url}"
+            if snippet:
+                block += f"\n{snippet}"
+            parts.append(block)
+    return "\n\n".join(parts) or "No results returned from Tavily."
+
+
+def _brave_content(api_key: str, query: str) -> str:
+    url = "https://api.search.brave.com/res/v1/web/search"
+    headers = {"Accept": "application/json", "X-Subscription-Token": api_key}
+    with requests.get(url, headers=headers, params={"q": query, "count": "5"}, timeout=120) as resp:
+        resp.raise_for_status()
+        body: dict[str, Any] = resp.json()
+    results = (body.get("web") or {}).get("results") or []
+    parts: list[str] = []
+    for item in results:
+        if not isinstance(item, dict):
+            continue
+        item_url = str(item.get("url") or "").strip()
+        title = str(item.get("title") or item_url).strip()
+        desc = str(item.get("description") or "").strip()
+        if item_url:
+            block = f"### {title}\n{item_url}"
+            if desc:
+                block += f"\n{desc}"
+            parts.append(block)
+    return "\n\n".join(parts) or "No results returned from Brave Search."
+
+
+def is_web_search_configured() -> bool:
+    """Return True if any configured web search provider has an API key set."""
+    integrations = load_settings().integrations
+    return not isinstance(_resolve_provider(integrations), dict)
+
+
+def is_web_get_contents_configured() -> bool:
+    """Return True if Exa page fetching is available for this scan."""
+    integrations = load_settings().integrations
+    return bool(integrations.exa_api_key) and integrations.web_search_provider in ("auto", "exa")
+
+
 def _resolve_provider(  # noqa: PLR0911 - each provider/missing-key case needs its own return
     integrations: Any,
 ) -> tuple[str, str] | dict[str, Any]:
@@ -168,6 +232,8 @@ def _resolve_provider(  # noqa: PLR0911 - each provider/missing-key case needs i
     provider = integrations.web_search_provider
     perplexity_key = integrations.perplexity_api_key
     exa_key = integrations.exa_api_key
+    tavily_key = getattr(integrations, "tavily_api_key", None)
+    brave_key = getattr(integrations, "brave_api_key", None)
 
     if provider == "perplexity":
         if not perplexity_key:
@@ -177,12 +243,26 @@ def _resolve_provider(  # noqa: PLR0911 - each provider/missing-key case needs i
         if not exa_key:
             return _not_configured_error("EXA_API_KEY")
         return ("exa", exa_key)
+    if provider == "tavily":
+        if not tavily_key:
+            return _not_configured_error("TAVILY_API_KEY")
+        return ("tavily", tavily_key)
+    if provider == "brave":
+        if not brave_key:
+            return _not_configured_error("BRAVE_API_KEY")
+        return ("brave", brave_key)
 
     if exa_key:
         return ("exa", exa_key)
     if perplexity_key:
         return ("perplexity", perplexity_key)
-    return _not_configured_error("EXA_API_KEY or PERPLEXITY_API_KEY")
+    if tavily_key:
+        return ("tavily", tavily_key)
+    if brave_key:
+        return ("brave", brave_key)
+    return _not_configured_error(
+        "EXA_API_KEY, PERPLEXITY_API_KEY, TAVILY_API_KEY, or BRAVE_API_KEY"
+    )
 
 
 def _not_configured_error(missing: str) -> dict[str, Any]:
@@ -243,6 +323,10 @@ def _do_search(query: str) -> dict[str, Any]:
                 integrations.exa_search_type,
                 integrations.exa_num_results,
             )
+        if provider == "tavily":
+            return _tavily_content(api_key, query)
+        if provider == "brave":
+            return _brave_content(api_key, query)
         return _perplexity_content(api_key, query)
 
     outcome = _guarded_call(

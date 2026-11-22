@@ -67,6 +67,25 @@
                 </label>
             </div>
 
+            <div class="field">
+                <label for="noise-profile">Profil kecepatan / Noise Governor</label>
+                <select id="noise-profile" name="noise_profile">
+                    @foreach(['off' => 'Off — Kecepatan penuh (default)', 'aggressive' => 'Aggressive — 20 req/s per host', 'balanced' => 'Balanced — 5 req/s per host', 'quiet' => 'Quiet — 2 req/s (ramah WAF)'] as $val => $lbl)
+                        <option value="{{ $val }}" @selected(old('noise_profile', 'off') === $val)>{{ $lbl }}</option>
+                    @endforeach
+                </select>
+                <p class="field-hint">Biarkan <code>Off</code> untuk kekuatan penuh, atau pilih profil rate-limit jika target memiliki WAF ketat.</p>
+            </div>
+
+            <div class="field">
+                <div class="label-row">
+                    <label for="auth-credentials-raw">Akun / Sesi Uji Terautentikasi (BOLA / BFLA)</label>
+                    <span class="label-optional">Opsional</span>
+                </div>
+                <textarea id="auth-credentials-raw" name="auth_credentials_raw" rows="3" maxlength="10000" class="input-mono" placeholder="user_a=Bearer eyJ...&#10;user_b=Cookie: session=abc123">{{ old('auth_credentials_raw') }}</textarea>
+                <p class="field-hint">Satu baris per akun/sesi (<code>label=nilai</code>). Disimpan terenkripsi untuk pengujian lintas-akun.</p>
+            </div>
+
             @if($profiles->isEmpty())
                 <p class="form-warning">Belum ada profil model aktif. Tambahkan <a href="{{ route('settings') }}">profil model</a> sebelum memulai.</p>
             @endif

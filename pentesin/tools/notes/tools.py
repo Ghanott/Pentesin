@@ -21,7 +21,16 @@ logger = logging.getLogger(__name__)
 
 
 _notes_storage: dict[str, dict[str, Any]] = {}
-_VALID_NOTE_CATEGORIES = ["general", "findings", "methodology", "questions", "plan", "wiki"]
+_VALID_NOTE_CATEGORIES = [
+    "general",
+    "findings",
+    "methodology",
+    "questions",
+    "plan",
+    "wiki",
+    "anomalies",
+    "recon_clues",
+]
 _notes_lock = threading.RLock()
 _DEFAULT_CONTENT_PREVIEW_CHARS = 280
 _NOTE_ID_GENERATION_ATTEMPTS = 1024
@@ -491,4 +500,93 @@ async def delete_note(ctx: RunContextWrapper, note_id: str) -> str:
     """
     return json.dumps(
         await asyncio.to_thread(_delete_note_impl, note_id), ensure_ascii=False, default=str
+    )
+
+
+def _search_notes_impl(
+    query: str,
+    category: str | None = None,
+    tags: list[str] | None = None,
+    limit: int = 20,
+    caller_agent_id: str | None = None,
+) -> dict[str, Any]:
+    cleaned_query = (query or "").strip()
+    if not cleaned_query:
+        return {
+            "success": False,
+            "error": "Search query cannot be empty",
+            "matches": [],
+            "match_count": 0,
+        }
+    tokens = [tok for tok in cleaned_query.lower().split() if tok]
+    capped_limit = max(1, min(int(limit), 50))
+    with _notes_lock:
+        try:
+            candidates = _filter_notes(category=category, tags=tags, search_query=None)
+            scored: list[tuple[int, dict[str, Any]]] = []
+            for note in candidates:
+                haystack = " ".join(
+                    [
+                        str(note.get("title") or ""),
+                        str(note.get("content") or ""),
+                        " ".join(str(t) for t in (note.get("tags") or [])),
+                        str(note.get("category") or ""),
+                    ]
+                ).lower()
+                hits = sum(1 for tok in tokens if tok in haystack)
+                if hits > 0:
+                    entry = _to_note_listing_entry(
+                        note, include_content=True, caller_agent_id=caller_agent_id
+                    )
+                    entry["relevance_hits"] = hits
+                    scored.append((hits, entry))
+            scored.sort(key=lambda item: item[0], reverse=True)
+            matches = [entry for _, entry in scored[:capped_limit]]
+        except (ValueError, TypeError) as e:
+            return {
+                "success": False,
+                "error": f"Failed to search notes: {e}",
+                "matches": [],
+                "match_count": 0,
+            }
+        return {
+            "success": True,
+            "query": cleaned_query,
+            "matches": matches,
+            "match_count": len(matches),
+            "total_notes": len(_notes_storage),
+        }
+
+
+@function_tool(timeout=30)
+async def search_notes(
+    ctx: RunContextWrapper,
+    query: str,
+    category: str | None = None,
+    tags: list[str] | None = None,
+    limit: int = 20,
+) -> str:
+    """Search across all shared agent notes, anomalies, and recon clues.
+
+    Matches one or more space-separated keywords against note titles, bodies,
+    categories, and tags across every agent in the scan, ranked by keyword hits.
+
+    Args:
+        query: Space-separated keywords (e.g. ``"jwt admin 403"`` or ``"ssrf webhook"``).
+        category: Optional category filter (e.g. ``"anomalies"``, ``"recon_clues"``).
+        tags: Optional tag filter.
+        limit: Max matches to return (1-50, default 20).
+    """
+    caller_agent_id, _ = _caller_identity(ctx)
+    return json.dumps(
+        await asyncio.to_thread(
+            _search_notes_impl,
+            query=query,
+            category=category,
+            tags=tags,
+            limit=limit,
+            caller_agent_id=caller_agent_id,
+        ),
+        ensure_ascii=False,
+        default=str,
     )

@@ -273,10 +273,201 @@ def _extract_urls_from_text(text: str) -> list[str]:
     return deduped
 
 
+def _quote_inert(value: Any, max_len: int = 160) -> str:
+    """Serialize target-controlled free text as a bounded quoted string."""
+    text = str(value or "").strip()
+    if len(text) > max_len:
+        text = text[:max_len] + "..."
+    return json.dumps(text, ensure_ascii=False)
+
+
+_NMAP_HOST_RE = re.compile(r"<host\b[^>]*>(.*?)</host>", re.DOTALL)
+_NMAP_ADDR_RE = re.compile(r'<address\b[^>]*\baddr="([^"]+)"')
+_NMAP_PORT_RE = re.compile(
+    r'<port\b[^>]*\bprotocol="([^"]+)"[^>]*\bportid="(\d+)"[^>]*>(.*?)</port>',
+    re.DOTALL,
+)
+_NMAP_PORT_ALT_RE = re.compile(
+    r'<port\b[^>]*\bportid="(\d+)"[^>]*\bprotocol="([^"]+)"[^>]*>(.*?)</port>',
+    re.DOTALL,
+)
+_NMAP_STATE_OPEN_RE = re.compile(r'<state\b[^>]*\bstate="open"')
+_NMAP_ATTR_NAME_RE = re.compile(r'\bname="([^"]*)"')
+_NMAP_ATTR_PROD_RE = re.compile(r'\bproduct="([^"]*)"')
+_NMAP_ATTR_VER_RE = re.compile(r'\bversion="([^"]*)"')
+
+
+def _match_attr(body: str, pattern: re.Pattern[str]) -> str:
+    found = pattern.search(body)
+    return found.group(1) if found else ""
+
+
+def _parse_nmap_xml(stripped: str) -> str | None:
+    if "<nmaprun" not in stripped:
+        return None
+    lines = ["### [Smart Recon] Nmap Structured Summary"]
+    host_count = 0
+    port_count = 0
+    for host_match in _NMAP_HOST_RE.finditer(stripped):
+        host_body = host_match.group(1)
+        addr_match = _NMAP_ADDR_RE.search(host_body)
+        addr = addr_match.group(1) if addr_match else "unknown"
+        open_ports: list[str] = []
+        ports_iter: list[tuple[str, str, str]] = [
+            (m.group(2), m.group(1), m.group(3)) for m in _NMAP_PORT_RE.finditer(host_body)
+        ]
+        if not ports_iter:
+            ports_iter = [
+                (m.group(1), m.group(2), m.group(3)) for m in _NMAP_PORT_ALT_RE.finditer(host_body)
+            ]
+        for pid, proto, port_body in ports_iter:
+            if not _NMAP_STATE_OPEN_RE.search(port_body):
+                continue
+            port_count += 1
+            svc_name = _match_attr(port_body, _NMAP_ATTR_NAME_RE)
+            product = _match_attr(port_body, _NMAP_ATTR_PROD_RE)
+            version = _match_attr(port_body, _NMAP_ATTR_VER_RE)
+            detail = " ".join(p for p in (product, version) if p)
+            if detail:
+                suffix = f" ({svc_name} {_quote_inert(detail)})"
+            elif svc_name:
+                suffix = f" ({svc_name})"
+            else:
+                suffix = ""
+            open_ports.append(f"{pid}/{proto}{suffix}")
+        if open_ports:
+            host_count += 1
+            lines.append(f"- `{addr}`: {', '.join(open_ports[:40])}")
+    if host_count == 0:
+        return None
+    lines.insert(1, f"- **Hosts with Open Ports:** {host_count} ({port_count} open ports)")
+    return "\n".join(lines)
+
+
+def _parse_single_json_scanner(stripped: str) -> str | None:
+    if not (stripped.startswith("{") and stripped.endswith("}")):
+        return None
+    try:
+        obj = json.loads(stripped)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(obj, dict):
+        return None
+
+    results = obj.get("results")
+    if (
+        isinstance(results, list)
+        and results
+        and isinstance(results[0], dict)
+        and "url" in results[0]
+    ):
+        lines = [
+            "### [Smart Recon] ffuf Structured Summary",
+            f"- **Total Hits:** {len(results)}",
+        ]
+        for item in results[:50]:
+            url = str(item.get("url") or "")
+            status = item.get("status", "?")
+            length = item.get("length", "?")
+            words = item.get("words", "?")
+            lines.append(f"- `{url}` [status={status}, len={length}, words={words}]")
+        if len(results) > 50:
+            lines.append(f"- [... {len(results) - 50} more hits truncated ...]")
+        return "\n".join(lines)
+
+    arjun_entries: list[str] = []
+    for key, val in list(obj.items())[:50]:
+        if (
+            isinstance(key, str)
+            and key.startswith(("http://", "https://"))
+            and isinstance(val, dict)
+            and isinstance(val.get("params"), list)
+        ):
+            method = str(val.get("method") or "GET").upper()
+            params = [str(p) for p in val["params"][:30]]
+            arjun_entries.append(f"- `{method} {key}` -> params: {', '.join(params)}")
+    if not arjun_entries:
+        return None
+    return "\n".join(
+        [
+            "### [Smart Recon] Arjun Parameter Discovery Summary",
+            f"- **Endpoints with Hidden Params:** {len(arjun_entries)}",
+            *arjun_entries,
+        ]
+    )
+
+
+def _parse_jsonl_scanner(stripped: str) -> str | None:
+    nuclei_hits: list[str] = []
+    httpx_hosts: list[str] = []
+    for raw_line in stripped.splitlines():
+        line = raw_line.strip()
+        if not (line.startswith("{") and line.endswith("}")):
+            continue
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(rec, dict):
+            continue
+        if "template-id" in rec:
+            tid = str(rec.get("template-id") or "unknown")
+            raw_info = rec.get("info")
+            info: dict[str, Any] = raw_info if isinstance(raw_info, dict) else {}
+            sev = str(info.get("severity") or "info").upper()
+            matched = str(rec.get("matched-at") or rec.get("host") or "")
+            name = _quote_inert(info.get("name") or tid)
+            nuclei_hits.append(f"- [{sev}] `{tid}` at `{matched}` (name={name})")
+        elif "status_code" in rec and ("url" in rec or "input" in rec):
+            url = str(rec.get("url") or rec.get("input") or "")
+            sc = rec.get("status_code")
+            title = _quote_inert(rec.get("title") or "") if rec.get("title") else ""
+            tech = rec.get("tech") if isinstance(rec.get("tech"), list) else []
+            tech_str = f" tech={','.join(str(t) for t in tech[:8])}" if tech else ""
+            title_str = f" title={title}" if title else ""
+            httpx_hosts.append(f"- `{url}` [{sc}]{tech_str}{title_str}")
+
+    if nuclei_hits:
+        return "\n".join(
+            [
+                "### [Smart Recon] Nuclei Structured Summary",
+                f"- **Total Matches:** {len(nuclei_hits)}",
+                *nuclei_hits[:60],
+            ]
+        )
+    if httpx_hosts:
+        return "\n".join(
+            [
+                "### [Smart Recon] httpx Structured Summary",
+                f"- **Live Endpoints:** {len(httpx_hosts)}",
+                *httpx_hosts[:60],
+            ]
+        )
+    return None
+
+
+def parse_structured_scanner_output(text: str) -> str | None:
+    """Deterministically parse nmap XML, ffuf JSON, nuclei JSONL, httpx JSONL, or arjun JSON.
+
+    Target-controlled free-text fields (titles, banners, template names) are
+    always quoted as inert strings to resist prompt injection.
+    """
+    stripped = text.strip()
+    if not stripped:
+        return None
+    if stripped.startswith(("<?xml", "<nmaprun")):
+        return _parse_nmap_xml(stripped)
+    return _parse_single_json_scanner(stripped) or _parse_jsonl_scanner(stripped)
+
+
 def compress_recon_output(text: str, *, sample_limit: int = 2) -> str:
     """Process raw crawler/fuzzer logs into a high-density attack-surface summary."""
     if not text or not text.strip():
         return "No recon output provided."
+
+    structured = parse_structured_scanner_output(text)
+    if structured is not None:
+        return structured
 
     urls = _extract_urls_from_text(text)
     if not urls:

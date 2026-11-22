@@ -1498,6 +1498,12 @@
                             </div>
                             <div class="finding-pills">
                                 <span class="sev-badge {{ $fSev }}">{{ $severityNames[$fSev] ?? $fSev }}</span>
+                                @if(! empty($f['id']))
+                                    <form method="POST" action="{{ route('scans.retest', [$scan, $f['id']]) }}" class="no-print" style="display:inline-block; margin-left:6px;">
+                                        @csrf
+                                        <button type="submit" class="btn-row" style="font-size:11px; padding:2px 8px;">{{ $isEn ? 'Retest Finding' : 'Uji Ulang (Retest)' }}</button>
+                                    </form>
+                                @endif
                                 <span class="cvss-score-pill">CVSS {{ $cvssVal }}</span>
                             </div>
                         </div>

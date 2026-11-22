@@ -19,12 +19,15 @@ class Scan extends Model
 
     protected $guarded = ['id'];
 
-    protected $hidden = ['llm_snapshot', 'lease_token'];
+    protected $hidden = ['llm_snapshot', 'lease_token', 'auth_credentials', 'integration_snapshot'];
 
     protected function casts(): array
     {
         return [
             'llm_snapshot' => 'encrypted:array',
+            'auth_credentials' => 'encrypted:array',
+            'integration_snapshot' => 'encrypted:array',
+            'retest_target_finding' => 'array',
             'context_mode' => 'boolean',
             'smart_recon' => 'boolean',
             'findings' => 'array',
