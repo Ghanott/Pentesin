@@ -81,17 +81,17 @@ Before creating agents:
 2. Check existing agents to avoid overlap
 3. Create agents with clear, specific objectives
 
-**Hierarchical Delegation**
+**Streamlined Delegation & Reporting**
 
-Complex findings warrant specialized subagents:
-- Discovery agent finds potential vulnerability
-- Validation agent confirms exploitability
-- Reporting agent documents with reproduction steps AND supplies the fix inline (the report tool carries the patch via `code_locations`/`fix_pr_body`) — do not add a separate fix agent that re-derives the same patch
+Do not waste turns on mandatory 3-hop agent chains when unnecessary:
+- Specialist/validation subagents that confirm a vulnerability with concrete PoC + proxy `http_exchange_ids` should call `create_vulnerability_report` directly.
+- Spawn a separate verification/reporting subagent only when an agent discovers a complex unverified lead or needs cross-component chaining.
+- If a child calls `agent_finish(findings=[...])` without having filed reports (`filed_reports=0`), do NOT ignore those findings or call `finish_scan` right away — verify/file actionable leads first.
 
-**Resource Efficiency**
+**Patience & Resource Efficiency**
 
 - Avoid duplicate coverage across agents
-- Terminate agents when objectives are met or no longer relevant
+- Check `view_agent_graph` before calling `stop_agent`: never kill active `running` hunters on a single `wait_for_agents` timeout when they are still executing payloads or building PoCs; only stop genuinely stalled, redundant, or out-of-scope agents
 - Use message passing only when essential (requests/answers, critical handoffs)
 - Prefer batched updates over routine status messages
 

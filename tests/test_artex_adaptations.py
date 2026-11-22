@@ -3,22 +3,26 @@
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING
+from types import SimpleNamespace
+from typing import cast
+
+import pytest
+from agents import RunConfig, Runner
+from agents.tool_context import ToolContext
 
 from pentesin.agents import factory
-from pentesin.agents.prompt import render_scope_prompt
+from pentesin.agents.prompt import render_scope_prompt, render_system_prompt
 from pentesin.config import loader
+from pentesin.core import execution
+from pentesin.core.agents import AgentCoordinator
 from pentesin.core.inputs import build_scope_context, render_noise_profile_guidance
 from pentesin.recon.compressor import compress_recon_output, parse_structured_scanner_output
 from pentesin.skills import get_all_skill_names, load_skills
+from pentesin.tools.agents_graph.tools import create_agent
 from pentesin.tools.notes import tools as notes_tools
 from pentesin.tools.output_store import get_untrusted_boundary_nonce, wrap_untrusted_output
 from pentesin.tools.reporting.tool import _normalize_evidence_roles, _validate_verified_quotes
 from pentesin.tools.web_search import tool as web_search_tool
-
-
-if TYPE_CHECKING:
-    import pytest
 
 
 def test_new_skills_are_discovered_and_loadable() -> None:
@@ -183,3 +187,113 @@ def test_evidence_roles_and_verified_quotes_validation() -> None:
         "HTTP/1.1 200 OK\nactual body",
     )
     assert len(missing_quote_errors) == 1
+
+
+def test_workflow_prompt_removes_3hop_tax_and_whitebox_noise() -> None:
+    prompt = render_system_prompt(is_root=True, scan_mode="deep", include_scope=False)
+    assert "ONLY REPORTING AGENTS" not in prompt
+    assert "WHITE-BOX TESTING" not in prompt
+    assert "DIRECT REPORTING ALLOWED" in prompt
+    assert "EXPLOIT FIRST, DEFER LAST" in prompt
+
+
+@pytest.mark.asyncio
+async def test_create_agent_defaults_inherit_context_false() -> None:
+    captured: dict[str, object] = {}
+
+    async def _spawner(**kwargs: object) -> dict[str, object]:
+        captured.update(kwargs)
+        return {"success": True, "agent_id": "child-1", "name": "SQLi Hunter"}
+
+    coordinator = AgentCoordinator()
+    await coordinator.register("root", "Root Agent", parent_id=None)
+    ctx = ToolContext(
+        context={
+            "coordinator": coordinator,
+            "agent_id": "root",
+            "spawn_child_agent": _spawner,
+        },
+        tool_name="create_agent",
+        tool_call_id="call-1",
+        tool_arguments="{}",
+        turn_input=[{"role": "user", "content": "huge parent history"}],
+    )
+
+    out = json.loads(
+        await create_agent.on_invoke_tool(
+            ctx,
+            json.dumps({"name": "SQLi Hunter", "task": "Test /login", "skills": ["sql_injection"]}),
+        )
+    )
+    assert out["success"] is True
+    assert captured["parent_history"] == []
+
+
+@pytest.mark.asyncio
+async def test_empty_model_response_retries_and_tool_progress_resets_recovery(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(execution, "_TRANSIENT_MODEL_RETRY_BASE_DELAY_S", 0.0)
+    monkeypatch.setattr(execution, "_TRANSIENT_MODEL_RETRY_MAX_DELAY_S", 0.0)
+
+    class _EmptyStream:
+        def __init__(self) -> None:
+            self.run_loop_exception = None
+            self.raw_responses = [object()]
+            self.new_items: list[object] = []
+            self.final_output = ""
+
+        async def stream_events(self):  # type: ignore[no-untyped-def]
+            if False:
+                yield None
+
+        def cancel(self, mode: str = "immediate") -> None:  # noqa: ARG002
+            return
+
+    class _ToolThenTextStream:
+        def __init__(self) -> None:
+            self.run_loop_exception = None
+            self.raw_responses = [object(), object()]
+            self.new_items = [SimpleNamespace(type="tool_call_item")]
+            self.final_output = "done step"
+
+        async def stream_events(self):  # type: ignore[no-untyped-def]
+            if False:
+                yield None
+
+        def cancel(self, mode: str = "immediate") -> None:  # noqa: ARG002
+            return
+
+    streams: list[object] = [_EmptyStream(), _ToolThenTextStream()]
+    calls = {"n": 0}
+
+    def _fake_streamed(*_args: object, **_kwargs: object) -> object:
+        s = streams[calls["n"]]
+        calls["n"] += 1
+        return s
+
+    monkeypatch.setattr(Runner, "run_streamed", _fake_streamed)
+
+    coordinator = AgentCoordinator()
+    await coordinator.register("child", "Recon", parent_id="root")
+    await coordinator.record_recovery("child")
+    await coordinator.record_recovery("child")
+    assert coordinator.recovery_counts["child"] == 2
+
+    res = await execution._run_cycle(
+        object(),
+        coordinator,
+        "child",
+        input_data="go",
+        run_config=cast("RunConfig", object()),
+        context={},
+        max_turns=5,
+        session=None,
+        interactive=False,
+        event_sink=None,
+        hooks=None,
+    )
+    assert calls["n"] == 2
+    assert execution._made_tool_progress(res) is True
+    await coordinator.reset_recovery("child")
+    assert "child" not in coordinator.recovery_counts

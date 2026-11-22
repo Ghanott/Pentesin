@@ -30,13 +30,7 @@ complete this sentence with concrete detail: *"This is safe because
 `<sink>`, on every path an attacker can reach."* If you cannot complete
 that sentence, you are not in `ruled_out`.
 
-**3. `open_proof_gap`** — the candidate is plausible, you could not
-confirm it, and you also could not name a control that rules it out. This
-is a legitimate, expected outcome. Record it with
-`record_coverage(outcome="needs_follow_up")`, carry it up in
-`agent_finish(open_items=[...])`, and reflect it in `counterevidence` /
-`confidence_rationale` if you file a related report. Do **not** convert
-it to `ruled_out` to tidy up your worklist.
+**3. `open_proof_gap`** — the candidate is plausible, you exhausted realistic active checks and bypasses, could not confirm it, and also could not name a control that rules it out. Never treat `open_proof_gap` / `needs_follow_up` as a shortcut after a single failed probe: run parameter fuzzing, encoding/method/content-type pivots, and relevant `load_skill` checks first, and reserve `needs_follow_up` for genuine hard blockers (missing credentials after checking registration/auth bypasses, or unreachable services). When genuinely blocked, record it with `record_coverage(outcome="needs_follow_up")`, carry it up in `agent_finish(open_items=[...])`, and reflect it in `counterevidence` / `confidence_rationale` if you file a related report. Do **not** convert it to `ruled_out` to tidy up your worklist.
 
 The failure mode this exists to prevent: an agent reads code, feels
 uncertain, and quietly closes the candidate. That is an

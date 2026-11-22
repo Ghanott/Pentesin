@@ -541,6 +541,36 @@ async def respawn_subagents(
 _INTERACTIVE_TOOL_RECOVERY_LIMIT = 3
 
 
+def _is_empty_model_response(result: Any) -> bool:
+    """Return True when a real SDK run returned HTTP 200 with zero output and no tool calls."""
+    raw_responses = getattr(result, "raw_responses", None)
+    new_items = getattr(result, "new_items", None)
+    if not isinstance(raw_responses, list) or not isinstance(new_items, list) or not raw_responses:
+        return False
+    final_output = getattr(result, "final_output", None)
+    has_final_output = (
+        bool(final_output.strip()) if isinstance(final_output, str) else final_output is not None
+    )
+    if has_final_output:
+        return False
+    return not any(
+        not isinstance(item, MessageOutputItem)
+        or bool(ItemHelpers.text_message_output(item).strip())
+        for item in new_items
+    )
+
+
+def _made_tool_progress(result: Any) -> bool:
+    """Return True when the run executed at least one tool call before returning."""
+    for item in getattr(result, "new_items", ()) or ():
+        if type(item).__name__ in {"ToolCallItem", "ToolCallOutputItem"} or getattr(
+            item, "type", None
+        ) in {"tool_call_item", "tool_call_output_item"}:
+            return True
+    raw_responses = getattr(result, "raw_responses", ()) or ()
+    return isinstance(raw_responses, list) and len(raw_responses) > 1
+
+
 async def _run_until_lifecycle(
     agent: Any,
     coordinator: AgentCoordinator,
@@ -638,6 +668,8 @@ async def _run_until_lifecycle(
             await coordinator.reset_recovery(agent_id)
             return result
 
+        if not silent_yield and _made_tool_progress(result):
+            await coordinator.reset_recovery(agent_id)
         recoveries = await coordinator.record_recovery(agent_id)
         _log_recovery(
             agent_id,
@@ -840,6 +872,21 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
                     )
             finally:
                 await coordinator.detach_stream(agent_id, stream)
+            if _is_empty_model_response(stream) and model_retries < _MAX_TRANSIENT_MODEL_RETRIES:
+                model_retries += 1
+                delay = _transient_model_retry_delay(model_retries)
+                logger.warning(
+                    "empty model response for %s; retrying turn (attempt %d/%d, backoff %.1fs)",
+                    agent_id,
+                    model_retries,
+                    _MAX_TRANSIENT_MODEL_RETRIES,
+                    delay,
+                )
+                if session is not None and hasattr(session, "get_items"):
+                    await replace_session_items(session, pre_run_items)
+                await asyncio.sleep(delay)
+                request_log.set_retry_attempt(model_retries)
+                continue
         except BudgetPausedError as exc:
             logger.info("agent %s paused at the scan budget limit: %s", agent_id, exc)
             if coordinator.budget_policy == "pause" or exc.operator_pause:

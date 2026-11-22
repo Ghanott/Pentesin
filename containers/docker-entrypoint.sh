@@ -119,8 +119,14 @@ echo "✅ System-wide proxy configuration complete"
 
 echo "Adding CA to browser trust store..."
 sudo -u pentester mkdir -p /home/pentester/.pki/nssdb
-sudo -u pentester certutil -N -d sql:/home/pentester/.pki/nssdb --empty-password
-sudo -u pentester certutil -A -n "Testing Root CA" -t "C,," -i /app/certs/ca.crt -d sql:/home/pentester/.pki/nssdb
+if [ ! -f /home/pentester/.pki/nssdb/cert9.db ]; then
+  _nss_pw=$(mktemp)
+  : > "$_nss_pw"
+  chmod 644 "$_nss_pw"
+  sudo -u pentester certutil -N -d sql:/home/pentester/.pki/nssdb -f "$_nss_pw" </dev/null
+  rm -f "$_nss_pw"
+fi
+sudo -u pentester certutil -A -n "Testing Root CA" -t "C,," -i /app/certs/ca.crt -d sql:/home/pentester/.pki/nssdb </dev/null
 echo "✅ CA added to browser trust store"
 
 mkdir -p /workspace/.agent-browser-screenshots

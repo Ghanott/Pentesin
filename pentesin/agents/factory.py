@@ -150,8 +150,6 @@ _UNTRUSTED_OUTPUT_TOOLS: frozenset[str] = frozenset(
         "repeat_request",
         "web_search",
         "web_get_contents",
-        "xray_scan",
-        "triage_recon_data",
     }
 )
 

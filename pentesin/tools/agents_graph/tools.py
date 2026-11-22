@@ -496,7 +496,7 @@ async def create_agent(
     ctx: RunContextWrapper,
     name: str,
     task: str,
-    inherit_context: bool = True,
+    inherit_context: bool = False,
     skills: list[str] | None = None,
 ) -> str:
     """Spawn a specialist child agent to run in parallel.
@@ -538,9 +538,10 @@ async def create_agent(
             recon already mapped, which surfaces are already covered,
             which coverage entry it is picking up. A child that is not
             told what is already known repeats it.
-        inherit_context: Default ``True``. The child receives the
-            parent's input history as background; only set ``False``
-            when starting a clean-slate task.
+        inherit_context: Default ``False`` for lean, focused specialist
+            contexts backed by shared ``notes``, ``threat_model``, and
+            ``coverage``; set ``True`` only when the child strictly
+            needs the parent's raw prior conversation history.
         skills: List of skill names (e.g. ``["xss", "sql_injection"]``).
             Max 5; prefer 1-3.
     """
