@@ -33,10 +33,15 @@ class RunnerController extends Controller
                 return response()->json(['job' => null]);
             }
             $lease = Str::random(64);
-            $scan->update(['status' => 'running', 'phase' => 'Menyiapkan runner', 'lease_token' => $lease, 'lease_expires_at' => now()->addSeconds(90), 'started_at' => now()]);
+            $scan->update(['status' => 'running', 'phase' => 'Menyiapkan runner', 'lease_token' => $lease, 'lease_expires_at' => now()->addSeconds($this->leaseSeconds()), 'started_at' => now()]);
 
             return response()->json(['job' => $scan->only(['id', 'kind', 'target', 'instruction', 'mode', 'max_budget', 'context_mode', 'smart_recon', 'noise_profile', 'retest_target_finding']) + ['resume' => $scan->agents()->exists(), 'lease_token' => $lease, 'profile' => $scan->llm_snapshot, 'auth_credentials' => $scan->auth_credentials ?? [], 'integrations' => $scan->integration_snapshot ?? [], 'run_dir' => base_path('../pentesin_runs/web-'.$scan->id)]])->header('Cache-Control', 'no-store');
         });
+    }
+
+    private function leaseSeconds(): int
+    {
+        return max(60, (int) config('pentesin.lease_seconds', 300));
     }
 
     private function fence(Scan $scan, string $lease, bool $terminalRetry = false): void
@@ -123,7 +128,7 @@ class RunnerController extends Controller
             foreach ($data['deleted_finding_ids'] ?? [] as $id) {
                 $findings->forget($id);
             }
-            $changes = ['lease_expires_at' => now()->addSeconds(90), 'findings' => $findings->values()->all()];
+            $changes = ['lease_expires_at' => now()->addSeconds($this->leaseSeconds()), 'findings' => $findings->values()->all()];
             foreach (['phase', 'error', 'test_result', 'artifacts', 'llm_usage'] as $key) {
                 if (array_key_exists($key, $data)) {
                     $changes[$key] = $this->redact($data[$key], $secret);

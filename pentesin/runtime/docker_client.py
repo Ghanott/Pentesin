@@ -66,9 +66,11 @@ def _apply_sandbox_network(create_kwargs: dict[str, Any]) -> None:
         create_kwargs.pop("ports", None)
 
 
+DEFAULT_SANDBOX_PIDS_LIMIT = 512
+
+
 def _apply_resource_limits(create_kwargs: dict[str, Any]) -> None:
-    """Apply optional cgroup resource caps from the environment. Unset/blank
-    values leave docker's default (unbounded), so this is opt-in per host."""
+    """Apply optional cgroup resource caps from the environment, with a safe default PID cap."""
     mem_limit = os.environ.get("PENTESIN_SANDBOX_MEM_LIMIT", "").strip()
     if mem_limit:
         create_kwargs["mem_limit"] = mem_limit
@@ -85,9 +87,15 @@ def _apply_resource_limits(create_kwargs: dict[str, Any]) -> None:
                 create_kwargs["nano_cpus"] = nano_cpus
 
     pids_limit = os.environ.get("PENTESIN_SANDBOX_PIDS_LIMIT", "").strip()
+    if pids_limit.lower() in {"0", "off", "none", "unlimited"}:
+        return
     if pids_limit:
         with contextlib.suppress(ValueError):
-            create_kwargs["pids_limit"] = int(pids_limit)
+            parsed = int(pids_limit)
+            if parsed > 0:
+                create_kwargs["pids_limit"] = max(64, parsed)
+                return
+    create_kwargs["pids_limit"] = DEFAULT_SANDBOX_PIDS_LIMIT
 
 
 def _apply_log_limits(create_kwargs: dict[str, Any]) -> None:

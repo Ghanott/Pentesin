@@ -86,5 +86,22 @@ class RunnerBridgeTest extends TestCase
         $this->withToken('test-runner-token')->postJson('/api/internal/runner/v1/claim')->assertOk()->assertJsonPath('job.id', $scan->id)->assertJsonPath('job.profile.api_key', 'secret');
         $this->withToken('test-runner-token')->postJson('/api/internal/runner/v1/claim')->assertJsonPath('job', null);
         $this->assertSame('running', $scan->fresh()->status);
+        $this->assertTrue($scan->fresh()->lease_expires_at->greaterThan(now()->addSeconds(240)));
+    }
+
+    public function test_claim_and_heartbeat_honor_configured_lease_tolerance(): void
+    {
+        config(['pentesin.runner_token' => 'test-runner-token', 'pentesin.lease_seconds' => 420]);
+        $user = User::factory()->create();
+        $profile = LlmProfile::create(['user_id' => $user->id, 'name' => 'Test', 'model' => 'openai/test', 'api_type' => 'chat_completions', 'api_key' => 'secret']);
+        $scan = Scan::create(['kind' => 'scan', 'target' => 'https://lab.example', 'instruction' => '', 'mode' => 'quick', 'status' => 'queued', 'user_id' => $user->id, 'llm_profile_id' => $profile->id, 'llm_snapshot' => $profile->runnerProfile(), 'findings' => []]);
+
+        $claimed = $this->withToken('test-runner-token')->postJson('/api/internal/runner/v1/claim')->assertOk();
+        $lease = $claimed->json('job.lease_token');
+        $this->assertTrue($scan->fresh()->lease_expires_at->greaterThan(now()->addSeconds(360)));
+
+        $this->travel(3)->minutes();
+        $this->withToken('test-runner-token')->postJson(route('runner.heartbeat', $scan), ['lease_token' => $lease])->assertOk();
+        $this->assertTrue($scan->fresh()->lease_expires_at->greaterThan(now()->addSeconds(360)));
     }
 }

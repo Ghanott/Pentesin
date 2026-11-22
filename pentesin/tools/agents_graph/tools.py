@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
+import os
 import uuid
 from collections import Counter
 from datetime import UTC, datetime
@@ -574,6 +576,30 @@ async def create_agent(
             ensure_ascii=False,
             default=str,
         )
+
+    raw_limit = os.environ.get("PENTESIN_MAX_CONCURRENT_CHILDREN", "6").strip()
+    if raw_limit.lower() not in {"0", "off", "none", "unlimited"}:
+        with contextlib.suppress(ValueError):
+            max_children = int(raw_limit)
+            if max_children > 0:
+                _, statuses, _, _ = await coordinator.graph_snapshot()
+                active_children = sum(
+                    1
+                    for aid, st in statuses.items()
+                    if aid != "root" and str(st) == "running"
+                )
+                if active_children >= max_children:
+                    msg = (
+                        f"Too many concurrent running child agents "
+                        f"({active_children}/{max_children}). "
+                        "Call wait_for_agents for active specialists to finish "
+                        "before spawning more."
+                    )
+                    return json.dumps(
+                        {"success": False, "error": msg, "agent_id": None},
+                        ensure_ascii=False,
+                        default=str,
+                    )
 
     parent_history = list(ctx.turn_input) if inherit_context and ctx.turn_input else []
     try:

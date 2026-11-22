@@ -3,14 +3,18 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
-import os
+import time as time_mod
 import types
 import urllib.error
 
 import pytest
+from agents.tool_context import ToolContext
 
+from pentesin.core.agents import AgentCoordinator
 from pentesin.interface import web_runner
 from pentesin.interface.tui.live_view import TuiLiveView
+from pentesin.runtime.docker_client import DEFAULT_SANDBOX_PIDS_LIMIT, _apply_resource_limits
+from pentesin.tools.agents_graph.tools import create_agent
 
 
 @pytest.fixture(autouse=True)
@@ -384,3 +388,91 @@ def test_unacknowledged_completion_prevents_claim(monkeypatch: pytest.MonkeyPatc
     assert asyncio.run(web_runner.run_worker("http://127.0.0.1:8000", "runner", once=True)) == 1
     assert len(urls) == 1
     assert urls[0].endswith("/heartbeat")
+
+
+def test_keepalive_thread_renews_lease_during_event_loop_stall(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sent_payloads: list[dict[str, object]] = []
+
+    class Coordinator:
+        async def graph_snapshot(self):
+            return {"root": None}, {"root": "running"}, {"root": "Root"}, {}
+
+    def post(_url: str, _token: str, body: dict[str, object] | None = None, **_kwargs: object):
+        sent_payloads.append(body or {})
+        return {"commands": []}
+
+    async def blocked_scan(_capture: object) -> None:
+        # Deliberately block the asyncio event loop synchronously for > stale threshold.
+        time_mod.sleep(0.18)
+
+    monkeypatch.setattr(web_runner, "HEARTBEAT_SECONDS", 10.0)
+    monkeypatch.setattr(web_runner, "KEEPALIVE_POLL_SECONDS", 0.02)
+    monkeypatch.setattr(web_runner, "KEEPALIVE_STALE_SECONDS", 0.04)
+    monkeypatch.setattr(web_runner, "_post_json", post)
+
+    worker_token = "runner-test-tok"  # noqa: S105
+    outcome = asyncio.run(
+        web_runner._supervise_scan(
+            blocked_scan,
+            Coordinator(),
+            TuiLiveView(),
+            types.SimpleNamespace(vulnerability_reports=[], cleanup=lambda **_kwargs: None),
+            {"id": 11, "lease_token": "lease-abc"},
+            base="http://127.0.0.1:8000",
+            token=worker_token,
+        )
+    )
+    assert outcome == {"status": "completed"}
+    keepalive_calls = [p for p in sent_payloads if set(p.keys()) == {"lease_token"}]
+    assert len(keepalive_calls) >= 1
+
+
+def test_pids_limit_defaults_and_child_agent_concurrency_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("PENTESIN_SANDBOX_PIDS_LIMIT", raising=False)
+    kwargs: dict[str, object] = {}
+    _apply_resource_limits(kwargs)
+    assert kwargs["pids_limit"] == DEFAULT_SANDBOX_PIDS_LIMIT
+
+    monkeypatch.setenv("PENTESIN_SANDBOX_PIDS_LIMIT", "256")
+    kwargs_explicit: dict[str, object] = {}
+    _apply_resource_limits(kwargs_explicit)
+    assert kwargs_explicit["pids_limit"] == 256
+
+    async def check_cap() -> None:
+        coordinator = AgentCoordinator()
+        await coordinator.register("root", "Root", parent_id=None)
+        await coordinator.register("child-1", "Worker 1", parent_id="root")
+        await coordinator.register("child-2", "Worker 2", parent_id="root")
+        await coordinator.set_status("child-1", "running")
+        await coordinator.set_status("child-2", "running")
+
+        monkeypatch.setenv("PENTESIN_MAX_CONCURRENT_CHILDREN", "2")
+        spawns = {"n": 0}
+
+        async def _spawner(**_kwargs: object) -> dict[str, object]:
+            spawns["n"] += 1
+            return {"success": True, "agent_id": "child-3"}
+
+        res = await create_agent.on_invoke_tool(
+            ToolContext(
+                context={
+                    "coordinator": coordinator,
+                    "agent_id": "root",
+                    "spawn_child_agent": _spawner,
+                },
+                tool_name="create_agent",
+                tool_call_id="tc-cap",
+                tool_arguments="{}",
+            ),
+            json.dumps({"name": "Worker 3", "task": "Run check", "skills": ["xss"]}),
+        )
+        parsed = json.loads(res)
+        assert parsed["success"] is False
+        assert "Too many concurrent running child agents (2/2)" in parsed["error"]
+        assert spawns["n"] == 0
+
+    asyncio.run(check_cap())

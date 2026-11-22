@@ -12,6 +12,7 @@ import logging
 import os
 import re
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -37,6 +38,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 HEARTBEAT_SECONDS = 15
+KEEPALIVE_POLL_SECONDS = 5.0
+KEEPALIVE_STALE_SECONDS = 25.0
 MAX_ARTIFACT_BYTES = 1_000_000
 _SECRET_KEY = re.compile(r"api[_-]?key|token|secret|password|credential", re.IGNORECASE)
 ARTIFACT_NAMES = (
@@ -286,17 +289,61 @@ async def _supervise_scan(  # noqa: PLR0915
     token: str,
 ) -> dict[str, Any]:
     stop = asyncio.Event()
+    keepalive_stop = threading.Event()
     operator_stopped = False
     scan_task: asyncio.Task[Any] | None = None
     event_prefix = hashlib.sha256(job["lease_token"].encode()).hexdigest()[:16]
     last_events: dict[str, int] = {}
     last_errors: dict[str, str] = {}
+    last_async_hb_ok = time.monotonic()
+    loop = asyncio.get_running_loop()
+
+    def _cancel_scan_from_keepalive() -> None:
+        if scan_task is not None and not scan_task.done():
+            scan_task.cancel()
+
+    def _keepalive_worker() -> None:
+        nonlocal operator_stopped, last_async_hb_ok
+        heartbeat_url = f"{base}/api/internal/runner/v1/scans/{job['id']}/heartbeat"
+        while not keepalive_stop.wait(KEEPALIVE_POLL_SECONDS):
+            if stop.is_set():
+                return
+            if time.monotonic() - last_async_hb_ok < KEEPALIVE_STALE_SECONDS:
+                continue
+            try:
+                resp = _post_json(
+                    heartbeat_url,
+                    token,
+                    {"lease_token": job["lease_token"]},
+                    timeout=10,
+                )
+            except urllib.error.HTTPError as exc:
+                if exc.code in {404, 409}:
+                    logger.warning(
+                        "Scan ended or lease revoked (%s) during keepalive; stopping scan",
+                        exc.code,
+                    )
+                    operator_stopped = True
+                    loop.call_soon_threadsafe(_cancel_scan_from_keepalive)
+                    return
+                logger.warning("Lease keepalive HTTP error: %s", exc.code)
+            except Exception:
+                logger.warning("Lease keepalive request failed", exc_info=True)
+            else:
+                last_async_hb_ok = time.monotonic()
+                commands = resp.get("commands") if isinstance(resp, dict) else None
+                if isinstance(commands, list) and any(
+                    isinstance(cmd, dict) and cmd.get("type") == "stop" for cmd in commands
+                ):
+                    operator_stopped = True
+                    loop.call_soon_threadsafe(_cancel_scan_from_keepalive)
+                    return
 
     def capture_event(agent_id: str, event: Any) -> None:
         live.ingest_sdk_event(agent_id, event)
 
     async def heartbeat(status: str | None = None) -> None:  # noqa: PLR0912
-        nonlocal operator_stopped
+        nonlocal operator_stopped, last_async_hb_ok
         parent_of, statuses, names, errors = await coordinator.graph_snapshot()
         for agent_id, error in errors.items():
             if error and last_errors.get(agent_id) != error:
@@ -358,6 +405,7 @@ async def _supervise_scan(  # noqa: PLR0915
                 raise
             logger.exception("Scan finished locally; completion delivery pending")
             return
+        last_async_hb_ok = time.monotonic()
         last_events.update({event["source_id"]: event["version"] for event in events})
         for command in response.get("commands", []):
             cmd_id = command.get("id") if isinstance(command, dict) else None
@@ -405,6 +453,12 @@ async def _supervise_scan(  # noqa: PLR0915
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(stop.wait(), timeout=HEARTBEAT_SECONDS)
 
+    keepalive_thread = threading.Thread(
+        target=_keepalive_worker,
+        name=f"pentesin-keepalive-{job['id']}",
+        daemon=True,
+    )
+    keepalive_thread.start()
     scan_task = asyncio.create_task(scan(capture_event))
     task = asyncio.create_task(heartbeat_loop())
     status = "completed"
@@ -418,7 +472,9 @@ async def _supervise_scan(  # noqa: PLR0915
         logger.exception("Scan failed")
         status = "failed"
     finally:
+        keepalive_stop.set()
         stop.set()
+        keepalive_thread.join(timeout=2.0)
         await task
     _, agent_statuses, _, _ = await coordinator.graph_snapshot()
     if status == "completed" and any(
